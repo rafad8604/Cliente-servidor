@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  mysql-server:
+    image: mysql:8
+    container_name: mensajeria-mysql
+    command: --max_allowed_packet=1073741824 --innodb_log_file_size=512M --innodb_buffer_pool_size=1G
+    environment:
+      MYSQL_ROOT_PASSWORD: root1234
+      MYSQL_DATABASE: mensajeria_db
+      MYSQL_USER: mensajeria_user
+      MYSQL_PASSWORD: mensajeria_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./server/src/main/resources/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql_data:
