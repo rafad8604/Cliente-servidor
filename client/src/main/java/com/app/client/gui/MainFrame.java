@@ -76,7 +76,7 @@ public class MainFrame extends JFrame {
     private final DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public MainFrame() {
-        super("📡 Sistema de Mensajería y Archivos");
+        super("Sistema de Mensajeria y Archivos");
         this.historialDAO = new HistorialDAO();
         initComponents();
         setupLayout();
@@ -112,7 +112,7 @@ public class MainFrame extends JFrame {
         bg.add(rbTcp);
         bg.add(rbUdp);
 
-        btnConectar = createStyledButton("⚡ Conectar", ACCENT);
+        btnConectar = createStyledButton("Conectar", ACCENT);
         lblEstado = new JLabel("● Desconectado");
         lblEstado.setFont(FONT_SMALL);
         lblEstado.setForeground(ERROR_COLOR);
@@ -169,7 +169,7 @@ public class MainFrame extends JFrame {
         txtMensaje.setForeground(TEXT_SECONDARY);
 
         btnEnviar = createStyledButton("Enviar", ACCENT);
-        btnAdjuntar = createStyledButton("📎 Adjuntar", new Color(166, 227, 161));
+        btnAdjuntar = createStyledButton("Adjuntar", new Color(166, 227, 161));
 
         progressBar = new JProgressBar(0, 100);
         progressBar.setStringPainted(true);
@@ -236,7 +236,7 @@ public class MainFrame extends JFrame {
                 BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER_COLOR),
                 BorderFactory.createEmptyBorder(4, 8, 4, 8)));
 
-        JLabel lblTitle = new JLabel("🌐 Conexión");
+        JLabel lblTitle = new JLabel("Conexion");
         lblTitle.setFont(FONT_TITLE);
         lblTitle.setForeground(TEXT_PRIMARY);
 
@@ -264,7 +264,7 @@ public class MainFrame extends JFrame {
         // Header
         JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT));
         header.setBackground(BG_PANEL);
-        JLabel lbl = new JLabel("💬 Chat y Mensajes");
+        JLabel lbl = new JLabel("Chat y Mensajes");
         lbl.setFont(FONT_TITLE);
         lbl.setForeground(TEXT_PRIMARY);
         header.add(lbl);
@@ -302,11 +302,11 @@ public class MainFrame extends JFrame {
 
         JPanel header = new JPanel(new BorderLayout());
         header.setBackground(BG_PANEL);
-        JLabel lbl = new JLabel("👥 Clientes Conectados");
+        JLabel lbl = new JLabel("Clientes Conectados");
         lbl.setFont(FONT_TITLE);
         lbl.setForeground(TEXT_PRIMARY);
 
-        JButton btnRefreshClientes = createStyledButton("🔄 Refrescar", ACCENT);
+        JButton btnRefreshClientes = createStyledButton("Refrescar", ACCENT);
         btnRefreshClientes.addActionListener(e -> refrescarClientes());
 
         header.add(lbl, BorderLayout.WEST);
@@ -329,17 +329,17 @@ public class MainFrame extends JFrame {
 
         JPanel header = new JPanel(new BorderLayout());
         header.setBackground(BG_PANEL);
-        JLabel lbl = new JLabel("📄 Documentos en el Servidor");
+        JLabel lbl = new JLabel("Documentos en el Servidor");
         lbl.setFont(FONT_TITLE);
         lbl.setForeground(TEXT_PRIMARY);
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         btnPanel.setBackground(BG_PANEL);
 
-        JButton btnRefreshDocs = createStyledButton("🔄 Refrescar", ACCENT);
-        JButton btnDescargarOrig = createStyledButton("📥 Original", SUCCESS);
-        JButton btnDescargarHash = createStyledButton("#️⃣ Hash", new Color(249, 226, 175));
-        JButton btnDescargarEnc = createStyledButton("🔒 Encriptado", new Color(203, 166, 247));
+        JButton btnRefreshDocs = createStyledButton("Refrescar", ACCENT);
+        JButton btnDescargarOrig = createStyledButton("Original", SUCCESS);
+        JButton btnDescargarHash = createStyledButton("Hash", new Color(249, 226, 175));
+        JButton btnDescargarEnc = createStyledButton("Encriptado", new Color(203, 166, 247));
 
         btnRefreshDocs.addActionListener(e -> refrescarDocumentos());
         btnDescargarOrig.addActionListener(e -> descargarSeleccionado("ORIGINAL"));
@@ -428,7 +428,7 @@ public class MainFrame extends JFrame {
         }).thenAccept(client -> {
             SwingUtilities.invokeLater(() -> {
                 networkClient = client;
-                btnConectar.setText("⛔ Desconectar");
+                btnConectar.setText("Desconectar");
                 btnConectar.setEnabled(true);
                 lblEstado.setText("● Conectado (" + proto + ")");
                 lblEstado.setForeground(SUCCESS);
@@ -459,7 +459,7 @@ public class MainFrame extends JFrame {
             }
             networkClient = null;
         }
-        btnConectar.setText("⚡ Conectar");
+        btnConectar.setText("Conectar");
         lblEstado.setText("● Desconectado");
         lblEstado.setForeground(ERROR_COLOR);
         setInputsEnabled(true);
@@ -487,7 +487,7 @@ public class MainFrame extends JFrame {
         }).thenAccept(resp -> {
             SwingUtilities.invokeLater(() -> {
                 String hash = resp.getString("hash");
-                appendChat("  ↳ Hash: " + hash, TEXT_SECONDARY);
+                appendChat("  -> Hash: " + hash, TEXT_SECONDARY);
 
                 // Registrar en historial local
                 try {
@@ -526,7 +526,7 @@ public class MainFrame extends JFrame {
 
         for (File file : files) {
             long fileSize = file.length();
-            appendChat("  📤 " + file.getName() + " (" + formatSize(fileSize) + ")", ACCENT);
+            appendChat("  [ENVIO] " + file.getName() + " (" + formatSize(fileSize) + ")", ACCENT);
 
             networkClient.enviarArchivo(file, bytesEnviados -> {
                 SwingUtilities.invokeLater(() -> {
@@ -537,7 +537,7 @@ public class MainFrame extends JFrame {
             }).thenAccept(resp -> {
                 SwingUtilities.invokeLater(() -> {
                     String hash = resp.getString("hash");
-                    appendChat("  ✅ " + file.getName() + " enviado. Hash: " + hash, SUCCESS);
+                    appendChat("  [OK] " + file.getName() + " enviado. Hash: " + hash, SUCCESS);
                     progressBar.setValue(100);
                     lblProgress.setText("Completado");
 
@@ -558,7 +558,7 @@ public class MainFrame extends JFrame {
                 });
             }).exceptionally(ex -> {
                 SwingUtilities.invokeLater(() -> {
-                    appendChat("  ❌ Error enviando " + file.getName() + ": " + ex.getCause().getMessage(), ERROR_COLOR);
+                    appendChat("  [ERROR] Error enviando " + file.getName() + ": " + ex.getCause().getMessage(), ERROR_COLOR);
                     progressBar.setVisible(false);
                 });
                 return null;
@@ -682,7 +682,7 @@ public class MainFrame extends JFrame {
                     // Copiar al portapapeles
                     java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
                             .setContents(new java.awt.datatransfer.StringSelection(hash), null);
-                    appendChat("  ↳ Hash copiado al portapapeles", TEXT_SECONDARY);
+                    appendChat("  -> Hash copiado al portapapeles", TEXT_SECONDARY);
                 });
             }).exceptionally(ex -> {
                 SwingUtilities.invokeLater(() ->
@@ -703,7 +703,7 @@ public class MainFrame extends JFrame {
 
         progressBar.setVisible(true);
         progressBar.setValue(0);
-        appendChat("  📥 Descargando " + tipo.toLowerCase() + ": " + nombre + "...", ACCENT);
+        appendChat("  [DESCARGA] Descargando " + tipo.toLowerCase() + ": " + nombre + "...", ACCENT);
 
         CompletableFuture.runAsync(() -> {
             try {
@@ -725,7 +725,7 @@ public class MainFrame extends JFrame {
             }
         }).thenRun(() -> {
             SwingUtilities.invokeLater(() -> {
-                appendChat("  ✅ Descarga completada: " + destino.getName(), SUCCESS);
+                appendChat("  [OK] Descarga completada: " + destino.getName(), SUCCESS);
                 progressBar.setValue(100);
                 lblProgress.setText("Completado");
 
@@ -745,7 +745,7 @@ public class MainFrame extends JFrame {
             });
         }).exceptionally(ex -> {
             SwingUtilities.invokeLater(() -> {
-                appendChat("  ❌ Error descargando: " + ex.getCause().getMessage(), ERROR_COLOR);
+                appendChat("  [ERROR] Error descargando: " + ex.getCause().getMessage(), ERROR_COLOR);
                 progressBar.setVisible(false);
             });
             return null;
