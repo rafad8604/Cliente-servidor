@@ -55,13 +55,11 @@ public class ClientHandler implements Runnable, Closeable {
                     .put("mensaje", "Conectado al servidor de mensajería");
             enviarMensaje(sesion);
 
-            BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-            DataInputStream dataIn = new DataInputStream(socket.getInputStream());
+            InputStream socketIn = socket.getInputStream();
 
             // Loop principal: leer comandos JSON
             while (running && !socket.isClosed()) {
-                String line = reader.readLine();
+                String line = leerLinea(socketIn);
                 if (line == null) break; // Cliente desconectado
 
                 line = line.trim();
@@ -69,7 +67,7 @@ public class ClientHandler implements Runnable, Closeable {
 
                 try {
                     Mensaje msg = Mensaje.fromJson(line);
-                    procesarComando(msg, dataIn);
+                    procesarComando(msg, socketIn);
                 } catch (Exception e) {
                     System.err.println("[HANDLER] Error procesando comando: " + e.getMessage());
                     enviarMensaje(Mensaje.error("Error procesando comando: " + e.getMessage()));
@@ -88,12 +86,12 @@ public class ClientHandler implements Runnable, Closeable {
         }
     }
 
-    private void procesarComando(Mensaje msg, DataInputStream dataIn) throws Exception {
+    private void procesarComando(Mensaje msg, InputStream socketIn) throws Exception {
         Comando cmd = msg.getComando();
         System.out.println("[HANDLER] Comando recibido de " + clientIp + ": " + cmd);
 
         switch (cmd) {
-            case ENVIAR_ARCHIVO -> procesarEnviarArchivo(msg, dataIn);
+            case ENVIAR_ARCHIVO -> procesarEnviarArchivo(msg, socketIn);
             case ENVIAR_MENSAJE -> procesarEnviarMensaje(msg);
             case LISTAR_DOCUMENTOS -> procesarListarDocumentos();
             case DESCARGAR_ARCHIVO -> procesarDescargarArchivo(msg);
@@ -104,14 +102,14 @@ public class ClientHandler implements Runnable, Closeable {
         }
     }
 
-    private void procesarEnviarArchivo(Mensaje msg, DataInputStream dataIn) throws Exception {
+    private void procesarEnviarArchivo(Mensaje msg, InputStream socketIn) throws Exception {
         String nombre = msg.getString("nombre");
         long tamano = msg.getLong("tamano");
 
         System.out.println("[HANDLER] Recibiendo archivo: " + nombre + " (" + tamano + " bytes)");
 
         // Leer exactamente 'tamano' bytes del stream
-        InputStream limitedStream = new BoundedInputStream(dataIn, tamano);
+        InputStream limitedStream = new BoundedInputStream(socketIn, tamano);
 
         Documento doc = documentoService.procesarArchivo(nombre, tamano, clientIp, limitedStream);
 
@@ -174,17 +172,24 @@ public class ClientHandler implements Runnable, Closeable {
 
         // Obtener stream original
         InputStream stream = documentoService.getArchivoOriginalStream(docId);
+        long tamanoReal = doc.getTamano();
+        if (doc.getRutaLocalOriginal() != null) {
+            File f = new File(doc.getRutaLocalOriginal());
+            if (f.exists()) {
+            tamanoReal = f.length();
+            }
+        }
 
         // Enviar metadatos primero
         Mensaje header = Mensaje.respuestaOk()
                 .put("nombre", doc.getNombre())
-                .put("tamano", doc.getTamano())
+            .put("tamano", tamanoReal)
                 .put("hash", doc.getHashSha256())
                 .put("tipoDescarga", "ORIGINAL");
         enviarMensaje(header);
 
         // Luego enviar datos binarios
-        enviarStream(stream, doc.getTamano());
+        enviarStream(stream, tamanoReal);
     }
 
     private void procesarDescargarHash(Mensaje msg) throws Exception {
@@ -261,15 +266,22 @@ public class ClientHandler implements Runnable, Closeable {
         byte[] buffer = new byte[8192];
         int bytesRead;
         long totalSent = 0;
-        while ((bytesRead = stream.read(buffer)) != -1) {
-            synchronized (socket.getOutputStream()) {
-                dos.write(buffer, 0, bytesRead);
+        try {
+            while ((bytesRead = stream.read(buffer)) != -1) {
+                synchronized (socket.getOutputStream()) {
+                    dos.write(buffer, 0, bytesRead);
+                }
+                totalSent += bytesRead;
             }
-            totalSent += bytesRead;
+
+            dos.flush();
+            if (expectedSize >= 0 && totalSent != expectedSize) {
+                throw new IOException("Transferencia incompleta: enviados=" + totalSent + " esperado=" + expectedSize);
+            }
+            System.out.println("[HANDLER] Stream enviado: " + totalSent + " bytes");
+        } finally {
+            stream.close();
         }
-        dos.flush();
-        stream.close();
-        System.out.println("[HANDLER] Stream enviado: " + totalSent + " bytes");
     }
 
     private void enviarStreamConFin(InputStream stream) throws IOException {
@@ -324,6 +336,26 @@ public class ClientHandler implements Runnable, Closeable {
     private String escapeJson(String s) {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private String leerLinea(InputStream input) throws IOException {
+        ByteArrayOutputStream lineBuffer = new ByteArrayOutputStream(256);
+        while (true) {
+            int b = input.read();
+            if (b == -1) {
+                if (lineBuffer.size() == 0) {
+                    return null;
+                }
+                break;
+            }
+            if (b == '\n') {
+                break;
+            }
+            if (b != '\r') {
+                lineBuffer.write(b);
+            }
+        }
+        return lineBuffer.toString(StandardCharsets.UTF_8);
     }
 
     /**

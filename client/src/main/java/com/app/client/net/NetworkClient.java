@@ -27,7 +27,7 @@ public class NetworkClient implements Closeable {
 
     // TCP
     private Socket tcpSocket;
-    private BufferedReader tcpReader;
+    private InputStream tcpIn;
     private OutputStream tcpOut;
 
     // UDP
@@ -39,7 +39,6 @@ public class NetworkClient implements Closeable {
 
     // Callback para mensajes entrantes (chat, notificaciones)
     private Consumer<Mensaje> onMessageReceived;
-    private Thread listenerThread;
     private volatile boolean connected = false;
 
     // Pool de hilos para envío de múltiples archivos
@@ -47,6 +46,7 @@ public class NetworkClient implements Closeable {
 
     // Para generar session IDs únicos (UDP)
     private final Random random = new Random();
+    private final Object tcpRequestLock = new Object();
 
     public NetworkClient(String host, int port, Protocolo protocolo) {
         this.host = host;
@@ -69,18 +69,14 @@ public class NetworkClient implements Closeable {
         tcpSocket = new Socket();
         tcpSocket.connect(new InetSocketAddress(host, port), 10000);
         tcpSocket.setSoTimeout(0); // Sin timeout para el listener
+        tcpIn = tcpSocket.getInputStream();
         tcpOut = tcpSocket.getOutputStream();
-        tcpReader = new BufferedReader(
-                new InputStreamReader(tcpSocket.getInputStream(), StandardCharsets.UTF_8));
 
         connected = true;
 
         // Leer mensaje de sesión del servidor
-        String firstLine = tcpReader.readLine();
+        String firstLine = leerLineaTcp();
         Mensaje sesion = (firstLine != null) ? Mensaje.fromJson(firstLine) : new Mensaje(Comando.SESION_INFO);
-
-        // Iniciar listener de mensajes entrantes
-        startTcpListener();
 
         return sesion;
     }
@@ -112,32 +108,34 @@ public class NetworkClient implements Closeable {
     }
 
     private Mensaje enviarArchivoTcp(File file, Consumer<Long> onProgress) throws Exception {
-        // 1. Enviar header JSON
-        Mensaje header = new Mensaje(Comando.ENVIAR_ARCHIVO)
-                .put("nombre", file.getName())
-                .put("tamano", file.length());
+        synchronized (tcpRequestLock) {
+            // 1. Enviar header JSON
+            Mensaje header = new Mensaje(Comando.ENVIAR_ARCHIVO)
+                    .put("nombre", file.getName())
+                    .put("tamano", file.length());
 
-        enviarLineaTcp(header.toJson());
+            enviarLineaTcp(header.toJson());
 
-        // 2. Enviar datos del archivo
-        try (FileInputStream fis = new FileInputStream(file)) {
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            long totalSent = 0;
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                synchronized (tcpOut) {
-                    tcpOut.write(buffer, 0, bytesRead);
+            // 2. Enviar datos del archivo
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalSent = 0;
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    synchronized (tcpOut) {
+                        tcpOut.write(buffer, 0, bytesRead);
+                    }
+                    totalSent += bytesRead;
+                    if (onProgress != null) onProgress.accept(totalSent);
                 }
-                totalSent += bytesRead;
-                if (onProgress != null) onProgress.accept(totalSent);
+                synchronized (tcpOut) {
+                    tcpOut.flush();
+                }
             }
-            synchronized (tcpOut) {
-                tcpOut.flush();
-            }
-        }
 
-        // 3. Esperar respuesta
-        return esperarRespuestaTcp();
+            // 3. Esperar respuesta
+            return esperarRespuestaTcp();
+        }
     }
 
     private Mensaje enviarArchivoUdp(File file, Consumer<Long> onProgress) throws Exception {
@@ -187,8 +185,10 @@ public class NetworkClient implements Closeable {
         Mensaje msg = new Mensaje(Comando.ENVIAR_MENSAJE).put("texto", texto);
 
         if (protocolo == Protocolo.TCP) {
-            enviarLineaTcp(msg.toJson());
-            return esperarRespuestaTcp();
+            synchronized (tcpRequestLock) {
+                enviarLineaTcp(msg.toJson());
+                return esperarRespuestaTcp();
+            }
         } else {
             int sessionId = random.nextInt(Integer.MAX_VALUE);
             enviarControlUdp(msg, sessionId);
@@ -202,8 +202,10 @@ public class NetworkClient implements Closeable {
     public Mensaje listarDocumentos() throws IOException {
         Mensaje msg = new Mensaje(Comando.LISTAR_DOCUMENTOS);
         if (protocolo == Protocolo.TCP) {
-            enviarLineaTcp(msg.toJson());
-            return esperarRespuestaTcp();
+            synchronized (tcpRequestLock) {
+                enviarLineaTcp(msg.toJson());
+                return esperarRespuestaTcp();
+            }
         } else {
             int sessionId = random.nextInt(Integer.MAX_VALUE);
             enviarControlUdp(msg, sessionId);
@@ -217,8 +219,10 @@ public class NetworkClient implements Closeable {
     public Mensaje listarClientes() throws IOException {
         Mensaje msg = new Mensaje(Comando.LISTAR_CLIENTES);
         if (protocolo == Protocolo.TCP) {
-            enviarLineaTcp(msg.toJson());
-            return esperarRespuestaTcp();
+            synchronized (tcpRequestLock) {
+                enviarLineaTcp(msg.toJson());
+                return esperarRespuestaTcp();
+            }
         } else {
             int sessionId = random.nextInt(Integer.MAX_VALUE);
             enviarControlUdp(msg, sessionId);
@@ -233,7 +237,7 @@ public class NetworkClient implements Closeable {
         if (protocolo == Protocolo.TCP) {
             descargarArchivoTcp(documentoId, destino, onProgress, "DESCARGAR_ARCHIVO");
         } else {
-            descargarArchivoUdp(documentoId, destino, onProgress);
+            descargarArchivoUdp(documentoId, destino, onProgress, Comando.DESCARGAR_ARCHIVO);
         }
     }
 
@@ -244,7 +248,7 @@ public class NetworkClient implements Closeable {
         if (protocolo == Protocolo.TCP) {
             descargarEncriptadoTcp(documentoId, destino, onProgress);
         } else {
-            descargarArchivoUdp(documentoId, destino, onProgress);
+            descargarArchivoUdp(documentoId, destino, onProgress, Comando.DESCARGAR_ENCRIPTADO);
         }
     }
 
@@ -254,8 +258,10 @@ public class NetworkClient implements Closeable {
     public Mensaje descargarHash(long documentoId) throws IOException {
         Mensaje msg = new Mensaje(Comando.DESCARGAR_HASH).put("documentoId", documentoId);
         if (protocolo == Protocolo.TCP) {
-            enviarLineaTcp(msg.toJson());
-            return esperarRespuestaTcp();
+            synchronized (tcpRequestLock) {
+                enviarLineaTcp(msg.toJson());
+                return esperarRespuestaTcp();
+            }
         } else {
             int sessionId = random.nextInt(Integer.MAX_VALUE);
             enviarControlUdp(msg, sessionId);
@@ -282,111 +288,106 @@ public class NetworkClient implements Closeable {
         }
     }
 
-    private final BlockingQueue<Mensaje> responseQueue = new LinkedBlockingQueue<>();
-
     private Mensaje esperarRespuestaTcp() throws IOException {
-        try {
-            Mensaje resp = responseQueue.poll(30, TimeUnit.SECONDS);
-            if (resp == null) {
-                throw new IOException("Timeout esperando respuesta del servidor");
-            }
-            return resp;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrumpido esperando respuesta", e);
+        String line = leerLineaTcp();
+        if (line == null) {
+            throw new IOException("Conexión TCP cerrada por el servidor");
         }
+        line = line.trim();
+        if (line.isEmpty()) {
+            throw new IOException("Respuesta TCP vacía");
+        }
+        return Mensaje.fromJson(line);
     }
 
-    private void startTcpListener() {
-        listenerThread = new Thread(() -> {
-            try {
-                while (connected && !tcpSocket.isClosed()) {
-                    String line = tcpReader.readLine();
-                    if (line == null) {
-                        connected = false;
-                        break;
-                    }
+    private String leerLineaTcp() throws IOException {
+        if (tcpIn == null) {
+            throw new IOException("Socket TCP no inicializado");
+        }
 
-                    line = line.trim();
-                    if (line.isEmpty()) continue;
-
-                    Mensaje msg = Mensaje.fromJson(line);
-
-                    // Mensajes de chat van al callback
-                    if (msg.getComando() == Comando.CHAT_MENSAJE && onMessageReceived != null) {
-                        onMessageReceived.accept(msg);
-                    } else {
-                        // Respuestas van a la cola
-                        responseQueue.offer(msg);
-                    }
+        ByteArrayOutputStream lineBuffer = new ByteArrayOutputStream(256);
+        while (true) {
+            int b = tcpIn.read();
+            if (b == -1) {
+                if (lineBuffer.size() == 0) {
+                    return null;
                 }
-            } catch (Exception e) {
-                if (connected) {
-                    System.err.println("[CLIENT] Listener TCP error: " + e.getMessage());
-                    connected = false;
-                }
+                break;
             }
-        }, "tcp-listener");
-        listenerThread.setDaemon(true);
-        listenerThread.start();
+            if (b == '\n') {
+                break;
+            }
+            if (b != '\r') {
+                lineBuffer.write(b);
+            }
+        }
+        return lineBuffer.toString(StandardCharsets.UTF_8);
     }
 
     private void descargarArchivoTcp(long documentoId, File destino, Consumer<Long> onProgress, String tipo)
             throws Exception {
-        Mensaje msg = new Mensaje(Comando.DESCARGAR_ARCHIVO).put("documentoId", documentoId);
-        enviarLineaTcp(msg.toJson());
+        synchronized (tcpRequestLock) {
+            Mensaje msg = new Mensaje(Comando.DESCARGAR_ARCHIVO).put("documentoId", documentoId);
+            enviarLineaTcp(msg.toJson());
 
-        // Esperar header de respuesta
-        Mensaje header = esperarRespuestaTcp();
-        if (header.getComando() == Comando.ERROR) {
-            throw new IOException("Error: " + header.getString("detalle"));
-        }
+            // Esperar header de respuesta
+            Mensaje header = esperarRespuestaTcp();
+            if (header.getComando() == Comando.ERROR) {
+                throw new IOException("Error: " + header.getString("detalle"));
+            }
 
-        long tamano = header.getLong("tamano");
+            long tamano = header.getLong("tamano");
 
-        // Leer datos binarios
-        try (FileOutputStream fos = new FileOutputStream(destino)) {
-            DataInputStream dis = new DataInputStream(tcpSocket.getInputStream());
-            byte[] buffer = new byte[8192];
-            long remaining = tamano;
-            long totalRead = 0;
+            // Leer datos binarios
+            try (FileOutputStream fos = new FileOutputStream(destino)) {
+                DataInputStream dis = new DataInputStream(tcpIn);
+                byte[] buffer = new byte[8192];
+                long remaining = tamano;
+                long totalRead = 0;
 
-            while (remaining > 0) {
-                int toRead = (int) Math.min(buffer.length, remaining);
-                int bytesRead = dis.read(buffer, 0, toRead);
-                if (bytesRead == -1) break;
-                fos.write(buffer, 0, bytesRead);
-                remaining -= bytesRead;
-                totalRead += bytesRead;
-                if (onProgress != null) onProgress.accept(totalRead);
+                while (remaining > 0) {
+                    int toRead = (int) Math.min(buffer.length, remaining);
+                    int bytesRead = dis.read(buffer, 0, toRead);
+                    if (bytesRead == -1) break;
+                    fos.write(buffer, 0, bytesRead);
+                    remaining -= bytesRead;
+                    totalRead += bytesRead;
+                    if (onProgress != null) onProgress.accept(totalRead);
+                }
+
+                if (remaining != 0) {
+                    throw new IOException("Descarga incompleta: faltan " + remaining + " bytes (recibidos " + totalRead + ")");
+                }
             }
         }
     }
 
     private void descargarEncriptadoTcp(long documentoId, File destino, Consumer<Long> onProgress)
             throws Exception {
-        Mensaje msg = new Mensaje(Comando.DESCARGAR_ENCRIPTADO).put("documentoId", documentoId);
-        enviarLineaTcp(msg.toJson());
+        synchronized (tcpRequestLock) {
+            Mensaje msg = new Mensaje(Comando.DESCARGAR_ENCRIPTADO).put("documentoId", documentoId);
+            enviarLineaTcp(msg.toJson());
 
-        // Esperar header
-        Mensaje header = esperarRespuestaTcp();
-        if (header.getComando() == Comando.ERROR) {
-            throw new IOException("Error: " + header.getString("detalle"));
-        }
+            // Esperar header
+            Mensaje header = esperarRespuestaTcp();
+            if (header.getComando() == Comando.ERROR) {
+                throw new IOException("Error: " + header.getString("detalle"));
+            }
 
-        // Leer bloques con marcador de fin
-        DataInputStream dis = new DataInputStream(tcpSocket.getInputStream());
-        try (FileOutputStream fos = new FileOutputStream(destino)) {
-            long totalRead = 0;
-            while (true) {
-                int blockSize = dis.readInt();
-                if (blockSize == 0) break; // FIN
+            // Leer bloques con marcador de fin
+            DataInputStream dis = new DataInputStream(tcpIn);
+            try (FileOutputStream fos = new FileOutputStream(destino)) {
+                long totalRead = 0;
+                while (true) {
+                    int blockSize = dis.readInt();
+                    if (blockSize == 0) break; // FIN
 
-                byte[] block = new byte[blockSize];
-                dis.readFully(block);
-                fos.write(block);
-                totalRead += blockSize;
-                if (onProgress != null) onProgress.accept(totalRead);
+                    byte[] block = new byte[blockSize];
+                    dis.readFully(block);
+                    fos.write(block);
+                    totalRead += blockSize;
+                    if (onProgress != null) onProgress.accept(totalRead);
+                }
             }
         }
     }
@@ -443,10 +444,10 @@ public class NetworkClient implements Closeable {
         throw new IOException("Timeout esperando respuesta UDP después de " + intentos + " intentos");
     }
 
-    private void descargarArchivoUdp(long documentoId, File destino, Consumer<Long> onProgress) throws Exception {
+    private void descargarArchivoUdp(long documentoId, File destino, Consumer<Long> onProgress, Comando comando) throws Exception {
         int sessionId = random.nextInt(Integer.MAX_VALUE);
 
-        Mensaje msg = new Mensaje(Comando.DESCARGAR_ARCHIVO).put("documentoId", documentoId);
+        Mensaje msg = new Mensaje(comando).put("documentoId", documentoId);
         enviarControlUdp(msg, sessionId);
 
         // Esperar header
@@ -468,6 +469,9 @@ public class NetworkClient implements Closeable {
                 if (data.length < HEADER_SIZE) continue;
 
                 int tipo = data[0] & 0xFF;
+                int incomingSessionId = ByteBuffer.wrap(data, 1, 4).getInt();
+
+                if (incomingSessionId != sessionId) continue;
 
                 if (tipo == 3) break; // FIN
 
@@ -506,9 +510,6 @@ public class NetworkClient implements Closeable {
         }
         if (udpSocket != null && !udpSocket.isClosed()) {
             udpSocket.close();
-        }
-        if (listenerThread != null) {
-            listenerThread.interrupt();
         }
     }
 }

@@ -55,19 +55,29 @@ public class DocumentoService {
 
         // 1. Guardar archivo original en disco
         Path archivoPath = Paths.get(STORAGE_DIR, System.currentTimeMillis() + "_" + nombre);
+        long bytesRecibidos = 0;
         try (FileOutputStream fos = new FileOutputStream(archivoPath.toFile())) {
             byte[] buffer = new byte[8192];
             int bytesRead;
             while ((bytesRead = dataIn.read(buffer)) != -1) {
                 fos.write(buffer, 0, bytesRead);
+                bytesRecibidos += bytesRead;
             }
+        }
+
+        if (bytesRecibidos != tamano) {
+            try {
+                Files.deleteIfExists(archivoPath);
+            } catch (IOException ignored) {
+            }
+            throw new IOException("Tamaño recibido incompleto. Esperado=" + tamano + " bytes, recibido=" + bytesRecibidos + " bytes");
         }
 
         // 2. Calcular hash SHA-256 del archivo original
         String hash = CryptoUtil.hashSHA256(archivoPath.toFile());
 
         // 3. Crear modelo del documento
-        Documento doc = new Documento(nombre, extension, tamano,
+        Documento doc = new Documento(nombre, extension, bytesRecibidos,
                 archivoPath.toAbsolutePath().toString(), hash, ipOrigen, Documento.Tipo.ARCHIVO);
 
         // 4. Encriptar y almacenar en chunks

@@ -144,8 +144,8 @@ public class UdpHandler implements Runnable {
                     if (i > 0) sb.append(",");
                     sb.append(String.format(
                             "{\"id\":%d,\"nombre\":\"%s\",\"extension\":\"%s\",\"tamano\":%d,\"tipo\":\"%s\",\"hash\":\"%s\",\"ip\":\"%s\",\"fecha\":\"%s\"}",
-                            d.getId(), d.getNombre(), d.getExtension() != null ? d.getExtension() : "",
-                            d.getTamano(), d.getTipo().name(), d.getHashSha256(), d.getIpPropietario(),
+                            d.getId(), escapeJson(d.getNombre()), escapeJson(d.getExtension() != null ? d.getExtension() : ""),
+                            d.getTamano(), d.getTipo().name(), escapeJson(d.getHashSha256()), escapeJson(d.getIpPropietario()),
                             d.getFechaCreacion().toString()));
                 }
                 sb.append("]");
@@ -160,7 +160,7 @@ public class UdpHandler implements Runnable {
                     if (i > 0) sb.append(",");
                     sb.append(String.format(
                             "{\"ip\":\"%s\",\"puerto\":%d,\"protocolo\":\"%s\",\"fechaInicio\":\"%s\"}",
-                            c.getIp(), c.getPuerto(), c.getProtocolo(), c.getFechaInicio().toString()));
+                            escapeJson(c.getIp()), c.getPuerto(), escapeJson(c.getProtocolo()), c.getFechaInicio().toString()));
                 }
                 sb.append("]");
                 Mensaje resp = Mensaje.respuestaOk("clientes", sb.toString()).put("total", clientes.size());
@@ -304,6 +304,11 @@ public class UdpHandler implements Runnable {
 
     public void stop() {
         running = false;
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     /**
