@@ -36,8 +36,6 @@ nb-deployment/
 # === Java ===
 *.class
 *.jar
-!dist/
-!dist/**/*.jar
 *.war
 *.ear
 hs_err_pid*
