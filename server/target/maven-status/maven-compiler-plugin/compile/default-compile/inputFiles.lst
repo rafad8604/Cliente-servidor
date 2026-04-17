@@ -13,3 +13,4 @@
 /Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/main/java/com/app/server/net/UdpHandler.java
 /Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/main/java/com/app/server/service/DocumentoService.java
 /Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/main/java/com/app/server/service/LogService.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/main/java/com/app/server/util/SessionLogManager.java
