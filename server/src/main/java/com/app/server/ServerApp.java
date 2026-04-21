@@ -2,6 +2,9 @@ package com.app.server;
 
 import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.dao.DatabaseConnection;
+import com.app.server.events.ConsoleServerEventListener;
+import com.app.server.events.ServerEventBus;
+import com.app.server.events.ServerEventType;
 import com.app.server.net.ServerCore;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
@@ -13,7 +16,10 @@ import java.util.Scanner;
 
 /**
  * Punto de entrada del servidor.
- * Inicializa la base de datos, genera clave de sesión, y arranca los listeners TCP/UDP.
+ *
+ * Instancia el {@link ServerEventBus} asíncrono y registra el listener de
+ * consola. Los eventos pueden activarse/desactivarse en caliente con los
+ * comandos 'events on' / 'events off' sin tocar la lógica central.
  */
 public class ServerApp {
 
@@ -36,48 +42,55 @@ public class ServerApp {
         System.out.println("  TCP: " + TCP_PORT + " | UDP: " + UDP_PORT);
         System.out.println("============================================");
 
+        ServerEventBus eventBus = new ServerEventBus();
+        eventBus.subscribe(new ConsoleServerEventListener());
+
         try {
-            // 1. Inicializar base de datos
             System.out.println("[INIT] Conectando a MySQL...");
             DatabaseConnection.getInstance().init();
-
-            // Limpiar clientes conectados del reinicio anterior
             new ClienteConectadoDAO().limpiarTodos();
 
-            // 2. Generar clave AES de sesión
             SecretKey sessionKey = CryptoUtil.generateAESKey();
             System.out.println("[INIT] Clave AES-256 de sesión generada.");
             System.out.println("[INIT] Clave (Base64): " + CryptoUtil.keyToBase64(sessionKey));
 
-            // 3. Inicializar servicios
             LogService logService = new LogService();
-            DocumentoService documentoService = new DocumentoService(sessionKey);
+            DocumentoService documentoService = new DocumentoService(sessionKey, eventBus);
 
-            // 4. Arrancar servidor
-            ServerCore server = new ServerCore(TCP_PORT, UDP_PORT, MAX_CLIENTS, documentoService, logService);
+            ServerCore server = new ServerCore(
+                    TCP_PORT, UDP_PORT,
+                    MAX_CLIENTS, MAX_CLIENTS,
+                    documentoService, logService, eventBus);
             server.start();
 
             logService.registrar("SERVIDOR_INICIADO", "localhost",
                     "TCP:" + TCP_PORT + " UDP:" + UDP_PORT + " MaxClientes:" + MAX_CLIENTS);
 
-            // 5. Esperar comando de salida
-            System.out.println("\nEscribe 'exit' para detener el servidor...\n");
+            System.out.println("\nComandos: status | events on | events off | exit\n");
             Scanner scanner = new Scanner(System.in);
             while (scanner.hasNextLine()) {
                 String line = scanner.nextLine().trim();
                 if ("exit".equalsIgnoreCase(line)) {
                     break;
                 } else if ("status".equalsIgnoreCase(line)) {
-                    System.out.println("Clientes activos: " + server.getClientPool().getActiveCount() +
-                            "/" + server.getClientPool().getMaxClients());
+                    System.out.println("TCP:  " + server.getTcpPool().getActiveCount() +
+                            "/" + server.getTcpPool().getMaxClients());
+                    System.out.println("UDP:  " + server.getUdpPool().getActiveCount() +
+                            "/" + server.getUdpPool().getMaxClients());
+                } else if ("events on".equalsIgnoreCase(line)) {
+                    eventBus.setEnabled(true);
+                    System.out.println("[EVT] listeners activados");
+                } else if ("events off".equalsIgnoreCase(line)) {
+                    eventBus.setEnabled(false);
+                    System.out.println("[EVT] listeners desactivados");
                 }
             }
 
-            // 6. Shutdown
             System.out.println("[SHUTDOWN] Deteniendo servidor...");
             server.stop();
             DatabaseConnection.getInstance().shutdown();
             logService.registrar("SERVIDOR_DETENIDO", "localhost", "Servidor detenido manualmente");
+            eventBus.publish(ServerEventType.SERVIDOR_DETENIDO, "ServerApp", "shutdown completo");
             System.out.println("[SHUTDOWN] Servidor detenido correctamente.");
 
         } catch (Exception e) {
@@ -85,9 +98,10 @@ public class ServerApp {
             e.printStackTrace();
             exitCode = 1;
         } finally {
-            if (sessionLog != null) {
-                sessionLog.close();
-            }
+            try {
+                eventBus.shutdown();
+            } catch (Exception ignored) { }
+            if (sessionLog != null) sessionLog.close();
         }
 
         if (exitCode != 0) {

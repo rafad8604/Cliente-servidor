@@ -1,2 +1,2 @@
-com/app/server/net/ClientPoolTest.class
-com/app/server/models/ServerModelsTest.class
+com\app\server\models\ServerModelsTest.class
+com\app\server\net\ClientPoolTest.class

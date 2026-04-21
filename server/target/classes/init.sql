@@ -38,13 +38,21 @@ CREATE TABLE IF NOT EXISTS documentos (
     INDEX idx_tipo (tipo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Tabla de chunks para evadir el límite de 1GB en MySQL
+-- Tabla de chunks (1 tabla para todos los chunks del documento)
+-- La columna 'codificacion' identifica cómo están guardados los bytes:
+--   RAW    → bytes encriptados sin codificar (formato legado)
+--   BASE64 → bytes encriptados codificados en Base64 (flujo actual)
 CREATE TABLE IF NOT EXISTS documentos_chunks (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     documento_id BIGINT NOT NULL,
     chunk_index INT NOT NULL,
     datos_encriptados LONGBLOB NOT NULL,
+    codificacion VARCHAR(16) NOT NULL DEFAULT 'RAW',
     FOREIGN KEY (documento_id) REFERENCES documentos(id) ON DELETE CASCADE,
     UNIQUE KEY uk_doc_chunk (documento_id, chunk_index),
     INDEX idx_documento_id (documento_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Migración idempotente para BDs existentes (MySQL 8.0.29+)
+ALTER TABLE documentos_chunks
+    ADD COLUMN IF NOT EXISTS codificacion VARCHAR(16) NOT NULL DEFAULT 'RAW';

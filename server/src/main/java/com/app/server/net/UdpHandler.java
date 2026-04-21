@@ -1,6 +1,8 @@
 package com.app.server.net;
 
 import com.app.server.dao.ClienteConectadoDAO;
+import com.app.server.events.ServerEventBus;
+import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.service.DocumentoService;
@@ -16,41 +18,50 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Servidor UDP que maneja la comunicación vía datagramas.
- * 
- * Protocolo UDP fiable para archivos grandes:
- * - Tipo 0: Control (JSON)
- * - Tipo 1: Datos (fragmento de archivo) con número de secuencia
- * - Tipo 2: ACK (confirmación de recepción)
- * - Tipo 3: FIN (señal de fin de transmisión)
- * 
- * Formato de datagrama:
- * [1 byte tipo][4 bytes sesionId][4 bytes seqNum][datos...]
+ * Servidor UDP.
+ *
+ * Tras el refactor:
+ *   - Usa {@link UdpClientChannel} como adapter de envío (Adapter).
+ *   - Adquiere/libera un slot del pool UDP por sesión (limita concurrencia
+ *     sin exponer Semaphore).
+ *   - Publica eventos en el {@link ServerEventBus}.
+ *   - Delega en {@link CommandDispatcher} los comandos simples.
+ *
+ * Formato de datagrama (sin cambios):
+ *   [1 byte tipo][4 bytes sessionId][4 bytes seqNum][payload]
  */
 public class UdpHandler implements Runnable {
 
-    private static final int MAX_DATAGRAM_SIZE = 60000; // Justo debajo del límite UDP
-    private static final int HEADER_SIZE = 9; // 1 tipo + 4 sesionId + 4 seqNum
-    private static final int DATA_PAYLOAD_SIZE = MAX_DATAGRAM_SIZE - HEADER_SIZE;
-    private static final int TIPO_CONTROL = 0;
-    private static final int TIPO_DATOS = 1;
-    private static final int TIPO_ACK = 2;
-    private static final int TIPO_FIN = 3;
+    private static final int MAX_DATAGRAM_SIZE = 60000;
+    private static final int DATA_PAYLOAD_SIZE = MAX_DATAGRAM_SIZE - UdpClientChannel.HEADER_SIZE;
 
     private final DatagramSocket socket;
     private final DocumentoService documentoService;
     private final LogService logService;
     private final ClienteConectadoDAO clienteDAO;
+    private final ClientPool udpPool;
+    private final ServerEventBus eventBus;
+    private final CommandDispatcher dispatcher;
     private volatile boolean running = true;
 
-    // Sesiones activas de transferencia: sessionId -> datos acumulados
     private final Map<Integer, UdpSession> sessions = new ConcurrentHashMap<>();
 
+    /**
+     * Constructor de compatibilidad (sin pool UDP ni eventBus).
+     */
     public UdpHandler(DatagramSocket socket, DocumentoService documentoService, LogService logService) {
+        this(socket, documentoService, logService, null, null);
+    }
+
+    public UdpHandler(DatagramSocket socket, DocumentoService documentoService, LogService logService,
+                      ClientPool udpPool, ServerEventBus eventBus) {
         this.socket = socket;
         this.documentoService = documentoService;
         this.logService = logService;
         this.clienteDAO = new ClienteConectadoDAO();
+        this.udpPool = udpPool;
+        this.eventBus = eventBus;
+        this.dispatcher = new CommandDispatcher(documentoService, logService, clienteDAO, eventBus);
     }
 
     @Override
@@ -65,157 +76,123 @@ public class UdpHandler implements Runnable {
                 socket.receive(packet);
 
                 byte[] data = Arrays.copyOf(packet.getData(), packet.getLength());
-                InetAddress addr = packet.getAddress();
-                int port = packet.getPort();
-
-                procesarPaquete(data, addr, port);
+                procesarPaquete(data, packet.getAddress(), packet.getPort());
 
             } catch (SocketException e) {
-                if (running) {
-                    System.err.println("[UDP] Socket cerrado: " + e.getMessage());
-                }
+                if (running) System.err.println("[UDP] Socket cerrado: " + e.getMessage());
             } catch (Exception e) {
                 System.err.println("[UDP] Error: " + e.getMessage());
+                if (eventBus != null) eventBus.publishError("udp-handler", e, null);
             }
         }
     }
 
     private void procesarPaquete(byte[] data, InetAddress addr, int port) throws Exception {
-        if (data.length < HEADER_SIZE) return;
+        if (data.length < UdpClientChannel.HEADER_SIZE) return;
 
         int tipo = data[0] & 0xFF;
         int sessionId = ByteBuffer.wrap(data, 1, 4).getInt();
         int seqNum = ByteBuffer.wrap(data, 5, 4).getInt();
-        byte[] payload = Arrays.copyOfRange(data, HEADER_SIZE, data.length);
-
-        String clientIp = addr.getHostAddress();
+        byte[] payload = Arrays.copyOfRange(data, UdpClientChannel.HEADER_SIZE, data.length);
 
         switch (tipo) {
-            case TIPO_CONTROL -> procesarControl(payload, addr, port, sessionId, clientIp);
-            case TIPO_DATOS -> procesarDatos(sessionId, seqNum, payload, addr, port);
-            case TIPO_FIN -> procesarFin(sessionId, addr, port, clientIp);
-            default -> System.err.println("[UDP] Tipo de paquete desconocido: " + tipo);
+            case UdpClientChannel.TIPO_CONTROL:
+                procesarControl(payload, addr, port, sessionId);
+                break;
+            case UdpClientChannel.TIPO_DATOS:
+                procesarDatos(sessionId, seqNum, payload, addr, port);
+                break;
+            case UdpClientChannel.TIPO_FIN:
+                procesarFin(sessionId, addr, port);
+                break;
+            default:
+                System.err.println("[UDP] Tipo de paquete desconocido: " + tipo);
         }
     }
 
-    private void procesarControl(byte[] payload, InetAddress addr, int port, int sessionId, String clientIp)
+    private void procesarControl(byte[] payload, InetAddress addr, int port, int sessionId)
             throws Exception {
-
         String json = new String(payload, StandardCharsets.UTF_8);
         Mensaje msg = Mensaje.fromJson(json);
         Comando cmd = msg.getComando();
 
+        UdpClientChannel channel = new UdpClientChannel(socket, addr, port, sessionId);
+        String clientIp = channel.getContext().getIp();
+
         System.out.println("[UDP] Comando de " + clientIp + ":" + port + " -> " + cmd);
 
-        // Registrar cliente UDP
         try {
             clienteDAO.registrar(new ClienteConectado(clientIp, port, "UDP"));
-        } catch (Exception e) {
-            // ignorar si ya existe
+        } catch (Exception ignored) {
+            // cliente UDP "ya existe"
         }
 
         switch (cmd) {
-            case ENVIAR_ARCHIVO -> {
-                // Iniciar sesión de transferencia
+            case ENVIAR_ARCHIVO: {
+                // Adquirir slot UDP (si hay pool); si está lleno, rechazar
+                if (udpPool != null && !udpPool.tryAcquire()) {
+                    if (eventBus != null) {
+                        eventBus.publish(ServerEventType.UDP_CONEXION_RECHAZADA,
+                                channel.getContext(), "pool lleno");
+                    }
+                    channel.sendMensaje(Mensaje.error("Servidor UDP lleno"));
+                    return;
+                }
                 String nombre = msg.getString("nombre");
                 long tamano = msg.getLong("tamano");
-                UdpSession session = new UdpSession(nombre, tamano, clientIp);
+                UdpSession session = new UdpSession(nombre, tamano, clientIp, channel);
                 sessions.put(sessionId, session);
 
-                // Enviar ACK de inicio
-                Mensaje ack = Mensaje.respuestaOk("mensaje", "Listo para recibir");
-                enviarControl(ack, addr, port, sessionId);
-                logService.registrar("UDP_INICIO_ARCHIVO", clientIp, "Archivo: " + nombre);
-            }
-            case ENVIAR_MENSAJE -> {
-                String texto = msg.getString("texto");
-                Documento doc = documentoService.procesarMensaje(texto, clientIp);
-                logService.logMensajeRecibido(clientIp);
+                if (eventBus != null) {
+                    eventBus.publish(ServerEventType.UDP_SESION_INICIADA, channel.getContext(),
+                            "sessionId=" + sessionId + " archivo=" + nombre);
+                }
 
-                Mensaje resp = Mensaje.respuestaOk("hash", doc.getHashSha256())
-                        .put("documentoId", doc.getId());
-                enviarControl(resp, addr, port, sessionId);
+                channel.sendMensaje(Mensaje.respuestaOk("mensaje", "Listo para recibir"));
+                logService.registrar("UDP_INICIO_ARCHIVO", clientIp, "Archivo: " + nombre);
+                break;
             }
-            case LISTAR_DOCUMENTOS -> {
-                List<Documento> docs = documentoService.listarDocumentos();
-                StringBuilder sb = new StringBuilder("[");
-                for (int i = 0; i < docs.size(); i++) {
-                    Documento d = docs.get(i);
-                    if (i > 0) sb.append(",");
-                    sb.append(String.format(
-                            "{\"id\":%d,\"nombre\":\"%s\",\"extension\":\"%s\",\"tamano\":%d,\"tipo\":\"%s\",\"hash\":\"%s\",\"ip\":\"%s\",\"fecha\":\"%s\"}",
-                            d.getId(), escapeJson(d.getNombre()), escapeJson(d.getExtension() != null ? d.getExtension() : ""),
-                            d.getTamano(), d.getTipo().name(), escapeJson(d.getHashSha256()), escapeJson(d.getIpPropietario()),
-                            d.getFechaCreacion().toString()));
-                }
-                sb.append("]");
-                Mensaje resp = Mensaje.respuestaOk("documentos", sb.toString()).put("total", docs.size());
-                enviarControl(resp, addr, port, sessionId);
-            }
-            case LISTAR_CLIENTES -> {
-                List<ClienteConectado> clientes = clienteDAO.listarTodos();
-                StringBuilder sb = new StringBuilder("[");
-                for (int i = 0; i < clientes.size(); i++) {
-                    ClienteConectado c = clientes.get(i);
-                    if (i > 0) sb.append(",");
-                    sb.append(String.format(
-                            "{\"ip\":\"%s\",\"puerto\":%d,\"protocolo\":\"%s\",\"fechaInicio\":\"%s\"}",
-                            escapeJson(c.getIp()), c.getPuerto(), escapeJson(c.getProtocolo()), c.getFechaInicio().toString()));
-                }
-                sb.append("]");
-                Mensaje resp = Mensaje.respuestaOk("clientes", sb.toString()).put("total", clientes.size());
-                enviarControl(resp, addr, port, sessionId);
-            }
-            case DESCARGAR_ARCHIVO -> {
+            case DESCARGAR_ARCHIVO: {
                 long docId = msg.getLong("documentoId");
                 Documento doc = documentoService.obtenerDocumento(docId);
                 if (doc == null) {
-                    enviarControl(Mensaje.error("Documento no encontrado"), addr, port, sessionId);
+                    channel.sendMensaje(Mensaje.error("Documento no encontrado"));
                     return;
                 }
                 logService.logDescarga(clientIp, doc.getNombre(), "ORIGINAL_UDP");
-
                 InputStream stream = documentoService.getArchivoOriginalStream(docId);
-                // Enviar metadatos
-                Mensaje header = Mensaje.respuestaOk()
+
+                channel.sendMensaje(Mensaje.respuestaOk()
                         .put("nombre", doc.getNombre())
                         .put("tamano", doc.getTamano())
                         .put("hash", doc.getHashSha256())
-                        .put("tipoDescarga", "ORIGINAL");
-                enviarControl(header, addr, port, sessionId);
+                        .put("tipoDescarga", "ORIGINAL"));
 
-                // Enviar datos en fragmentos con ACK
-                enviarStreamUdp(stream, addr, port, sessionId);
+                enviarStreamUdp(stream, channel);
+                break;
             }
-            case DESCARGAR_HASH -> {
-                long docId = msg.getLong("documentoId");
-                String hash = documentoService.getHash(docId);
-                if (hash == null) {
-                    enviarControl(Mensaje.error("Documento no encontrado"), addr, port, sessionId);
-                    return;
-                }
-                Mensaje resp = Mensaje.respuestaOk("hash", hash).put("tipoDescarga", "HASH");
-                enviarControl(resp, addr, port, sessionId);
-            }
-            case DESCARGAR_ENCRIPTADO -> {
+            case DESCARGAR_ENCRIPTADO: {
                 long docId = msg.getLong("documentoId");
                 Documento doc = documentoService.obtenerDocumento(docId);
                 if (doc == null) {
-                    enviarControl(Mensaje.error("Documento no encontrado"), addr, port, sessionId);
+                    channel.sendMensaje(Mensaje.error("Documento no encontrado"));
                     return;
                 }
                 logService.logDescarga(clientIp, doc.getNombre(), "ENCRIPTADO_UDP");
-
                 InputStream stream = documentoService.getArchivoEncriptadoStream(docId);
-                Mensaje header = Mensaje.respuestaOk()
+                channel.sendMensaje(Mensaje.respuestaOk()
                         .put("nombre", doc.getNombre() + ".enc")
                         .put("hash", doc.getHashSha256())
-                        .put("tipoDescarga", "ENCRIPTADO");
-                enviarControl(header, addr, port, sessionId);
-
-                enviarStreamUdp(stream, addr, port, sessionId);
+                        .put("tipoDescarga", "ENCRIPTADO"));
+                enviarStreamUdp(stream, channel);
+                break;
             }
-            default -> enviarControl(Mensaje.error("Comando no soportado por UDP"), addr, port, sessionId);
+            default: {
+                // Delegar todo lo "simple" al dispatcher compartido
+                if (!dispatcher.dispatchSimple(channel, msg)) {
+                    channel.sendMensaje(Mensaje.error("Comando no soportado por UDP"));
+                }
+            }
         }
     }
 
@@ -226,69 +203,48 @@ public class UdpHandler implements Runnable {
             System.err.println("[UDP] Sesión no encontrada: " + sessionId);
             return;
         }
-
         session.addChunk(seqNum, data);
-        enviarAck(seqNum, addr, port, sessionId);
+        session.channel.sendAck(seqNum);
     }
 
-    private void procesarFin(int sessionId, InetAddress addr, int port, String clientIp) throws Exception {
+    private void procesarFin(int sessionId, InetAddress addr, int port) throws Exception {
         UdpSession session = sessions.remove(sessionId);
         if (session == null) {
-            enviarControl(Mensaje.error("Sesión no encontrada"), addr, port, sessionId);
+            new UdpClientChannel(socket, addr, port, sessionId)
+                    .sendMensaje(Mensaje.error("Sesión no encontrada"));
             return;
         }
 
-        // Reconstruir archivo desde chunks ordenados
-        InputStream stream = session.toInputStream();
+        try {
+            InputStream stream = session.toInputStream();
+            Documento doc = documentoService.procesarArchivo(
+                    session.nombre, session.tamano, session.clientIp, stream);
 
-        Documento doc = documentoService.procesarArchivo(
-                session.nombre, session.tamano, clientIp, stream);
+            if (logService != null) {
+                logService.logArchivoRecibido(session.clientIp, session.nombre, session.tamano);
+            }
 
-        logService.logArchivoRecibido(clientIp, session.nombre, session.tamano);
+            session.channel.sendMensaje(Mensaje.respuestaOk("hash", doc.getHashSha256())
+                    .put("documentoId", doc.getId())
+                    .put("mensaje", "Archivo recibido via UDP"));
 
-        Mensaje resp = Mensaje.respuestaOk("hash", doc.getHashSha256())
-                .put("documentoId", doc.getId())
-                .put("mensaje", "Archivo recibido via UDP");
-        enviarControl(resp, addr, port, sessionId);
+            if (eventBus != null) {
+                eventBus.publish(ServerEventType.UDP_SESION_FINALIZADA, session.channel.getContext(),
+                        "sessionId=" + sessionId + " docId=" + doc.getId());
+            }
+        } finally {
+            if (udpPool != null) udpPool.release();
+        }
     }
 
-    // --- Envío UDP ---
-
-    private void enviarControl(Mensaje msg, InetAddress addr, int port, int sessionId) throws IOException {
-        byte[] payload = msg.toJson().getBytes(StandardCharsets.UTF_8);
-        enviarPaquete(TIPO_CONTROL, sessionId, 0, payload, addr, port);
-    }
-
-    private void enviarAck(int seqNum, InetAddress addr, int port, int sessionId) throws IOException {
-        enviarPaquete(TIPO_ACK, sessionId, seqNum, new byte[0], addr, port);
-    }
-
-    private void enviarPaquete(int tipo, int sessionId, int seqNum, byte[] payload,
-                               InetAddress addr, int port) throws IOException {
-        byte[] packet = new byte[HEADER_SIZE + payload.length];
-        packet[0] = (byte) tipo;
-        ByteBuffer.wrap(packet, 1, 4).putInt(sessionId);
-        ByteBuffer.wrap(packet, 5, 4).putInt(seqNum);
-        System.arraycopy(payload, 0, packet, HEADER_SIZE, payload.length);
-
-        DatagramPacket dp = new DatagramPacket(packet, packet.length, addr, port);
-        socket.send(dp);
-    }
-
-    private void enviarStreamUdp(InputStream stream, InetAddress addr, int port, int sessionId)
-            throws IOException {
+    private void enviarStreamUdp(InputStream stream, UdpClientChannel channel) throws IOException {
         byte[] buffer = new byte[DATA_PAYLOAD_SIZE];
         int seqNum = 0;
         int bytesRead;
 
         while ((bytesRead = stream.read(buffer)) != -1) {
-            byte[] chunk = bytesRead < buffer.length ?
-                    Arrays.copyOf(buffer, bytesRead) : buffer.clone();
-
-            enviarPaquete(TIPO_DATOS, sessionId, seqNum, chunk, addr, port);
+            channel.sendDataChunk(seqNum, buffer, 0, bytesRead);
             seqNum++;
-
-            // Pequeña pausa para no saturar la red
             try {
                 Thread.sleep(1);
             } catch (InterruptedException e) {
@@ -296,9 +252,7 @@ public class UdpHandler implements Runnable {
                 break;
             }
         }
-
-        // Enviar FIN
-        enviarPaquete(TIPO_FIN, sessionId, seqNum, new byte[0], addr, port);
+        channel.sendFin(seqNum);
         stream.close();
     }
 
@@ -306,24 +260,21 @@ public class UdpHandler implements Runnable {
         running = false;
     }
 
-    private String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
     /**
-     * Sesión UDP para acumular chunks de un archivo recibido.
+     * Sesión UDP de recepción. Acumula chunks y mantiene el canal de respuesta.
      */
     private static class UdpSession {
         final String nombre;
         final long tamano;
         final String clientIp;
+        final UdpClientChannel channel;
         final ConcurrentHashMap<Integer, byte[]> chunks = new ConcurrentHashMap<>();
 
-        UdpSession(String nombre, long tamano, String clientIp) {
+        UdpSession(String nombre, long tamano, String clientIp, UdpClientChannel channel) {
             this.nombre = nombre;
             this.tamano = tamano;
             this.clientIp = clientIp;
+            this.channel = channel;
         }
 
         void addChunk(int seqNum, byte[] data) {
@@ -331,15 +282,12 @@ public class UdpHandler implements Runnable {
         }
 
         InputStream toInputStream() {
-            // Ordenar chunks por número de secuencia
             List<Integer> keys = new ArrayList<>(chunks.keySet());
             Collections.sort(keys);
-
             List<InputStream> streams = new ArrayList<>();
             for (int key : keys) {
                 streams.add(new ByteArrayInputStream(chunks.get(key)));
             }
-
             return new SequenceInputStream(Collections.enumeration(streams));
         }
     }
