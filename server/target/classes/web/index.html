@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel HTTP - Sistema de Mensajeria</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #0f766e;
+      --primary-2: #0ea5a3;
+      --border: #e5e7eb;
+      --ok: #166534;
+      --error: #b91c1c;
+      --shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+      color: var(--text);
+      background: linear-gradient(135deg, #ecfeff 0%, var(--bg) 35%, #fef3c7 100%);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 24px auto;
+      padding: 0 16px 32px;
+    }
+
+    .hero {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 18px 20px;
+      margin-bottom: 18px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.35rem;
+    }
+
+    .badge {
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+    }
+
+    .card {
+      grid-column: span 12;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .card-header h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .card-body { padding: 12px 14px; }
+
+    .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    button {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    button:hover { background: var(--primary-2); }
+
+    input[type="file"] {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px;
+      background: #fff;
+    }
+
+    .status {
+      margin-top: 10px;
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .status.ok { color: var(--ok); }
+    .status.error { color: var(--error); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      word-break: break-word;
+    }
+
+    th {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+    }
+
+    @media (min-width: 900px) {
+      .w-6 { grid-column: span 6; }
+      .w-12 { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>Panel Web HTTP</h1>
+      <span class="badge">Conexion fija: HTTP</span>
+    </section>
+
+    <div class="grid">
+      <section class="card w-12">
+        <div class="card-header">
+          <h2>Subir archivo al servidor</h2>
+        </div>
+        <div class="card-body">
+          <div class="actions">
+            <input id="fileInput" type="file">
+            <button id="uploadBtn" type="button">Subir</button>
+          </div>
+          <div id="uploadStatus" class="status">Selecciona un archivo para enviarlo por HTTP.</div>
+        </div>
+      </section>
+
+      <section class="card w-12">
+        <div class="card-header">
+          <h2>Documentos (BD)</h2>
+          <button id="refreshDocsBtn" type="button">Refrescar</button>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Tipo</th>
+                <th>Tamano</th>
+                <th>Hash</th>
+                <th>IP</th>
+                <th>Fecha</th>
+              </tr>
+            </thead>
+            <tbody id="docsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card w-6">
+        <div class="card-header">
+          <h2>Clientes conectados (BD)</h2>
+          <button id="refreshClientsBtn" type="button">Refrescar</button>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr>
+                <th>IP</th>
+                <th>Puerto</th>
+                <th>Protocolo</th>
+                <th>Desde</th>
+              </tr>
+            </thead>
+            <tbody id="clientsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card w-6">
+        <div class="card-header">
+          <h2>Logs (BD)</h2>
+          <button id="refreshLogsBtn" type="button">Refrescar</button>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Accion</th>
+                <th>IP</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody id="logsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadStatus = document.getElementById('uploadStatus');
+
+    const docsBody = document.getElementById('docsBody');
+    const clientsBody = document.getElementById('clientsBody');
+    const logsBody = document.getElementById('logsBody');
+
+    const refreshDocsBtn = document.getElementById('refreshDocsBtn');
+    const refreshClientsBtn = document.getElementById('refreshClientsBtn');
+    const refreshLogsBtn = document.getElementById('refreshLogsBtn');
+
+    function formatSize(bytes) {
+      if (bytes == null || isNaN(bytes)) return '-';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function setStatus(text, ok = false) {
+      uploadStatus.textContent = text;
+      uploadStatus.className = 'status ' + (ok ? 'ok' : 'error');
+    }
+
+    function renderRows(tbody, rows, renderer) {
+      tbody.innerHTML = '';
+      if (!rows || rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 8;
+        td.textContent = 'Sin datos';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+
+      rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        renderer(tr, row);
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error('HTTP ' + response.status + ': ' + text);
+      }
+      return response.json();
+    }
+
+    async function refreshDocumentos() {
+      const docs = await fetchJson('/api/documentos');
+      renderRows(docsBody, docs, (tr, d) => {
+        tr.innerHTML = `
+          <td>${d.id ?? ''}</td>
+          <td>${d.nombre ?? ''}</td>
+          <td>${d.tipo ?? ''}</td>
+          <td>${formatSize(d.tamano)}</td>
+          <td>${d.hash ?? ''}</td>
+          <td>${d.ip ?? ''}</td>
+          <td>${d.fecha ?? ''}</td>
+        `;
+      });
+    }
+
+    async function refreshClientes() {
+      const clients = await fetchJson('/api/clientes');
+      renderRows(clientsBody, clients, (tr, c) => {
+        tr.innerHTML = `
+          <td>${c.ip ?? ''}</td>
+          <td>${c.puerto ?? ''}</td>
+          <td>${c.protocolo ?? ''}</td>
+          <td>${c.fechaInicio ?? ''}</td>
+        `;
+      });
+    }
+
+    async function refreshLogs() {
+      const logs = await fetchJson('/api/logs?limit=50');
+      renderRows(logsBody, logs, (tr, l) => {
+        tr.innerHTML = `
+          <td>${l.fechaHora ?? ''}</td>
+          <td>${l.accion ?? ''}</td>
+          <td>${l.ipOrigen ?? ''}</td>
+          <td>${l.detalles ?? ''}</td>
+        `;
+      });
+    }
+
+    async function uploadFile() {
+      const file = fileInput.files[0];
+      if (!file) {
+        setStatus('Debes seleccionar un archivo antes de subirlo.');
+        return;
+      }
+
+      uploadBtn.disabled = true;
+      setStatus('Subiendo archivo...', true);
+
+      try {
+        const url = '/api/upload?filename=' + encodeURIComponent(file.name);
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-File-Name': encodeURIComponent(file.name)
+          },
+          body: file
+        });
+
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.detalle || 'Error desconocido');
+        }
+
+        setStatus('Archivo subido: ID=' + body.documentoId + ' | Hash=' + body.hash, true);
+        fileInput.value = '';
+        await refreshDocumentos();
+        await refreshLogs();
+      } catch (error) {
+        setStatus('Error al subir archivo: ' + error.message);
+      } finally {
+        uploadBtn.disabled = false;
+      }
+    }
+
+    uploadBtn.addEventListener('click', uploadFile);
+    refreshDocsBtn.addEventListener('click', () => refreshDocumentos().catch((e) => setStatus(e.message)));
+    refreshClientsBtn.addEventListener('click', () => refreshClientes().catch((e) => setStatus(e.message)));
+    refreshLogsBtn.addEventListener('click', () => refreshLogs().catch((e) => setStatus(e.message)));
+
+    Promise.all([refreshDocumentos(), refreshClientes(), refreshLogs()])
+      .then(() => setStatus('Panel HTTP listo.', true))
+      .catch((error) => setStatus('No se pudo cargar el panel: ' + error.message));
+  </script>
+</body>
+</html>

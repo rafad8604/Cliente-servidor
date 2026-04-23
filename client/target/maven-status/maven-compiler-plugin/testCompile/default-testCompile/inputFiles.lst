@@ -1,2 +1,3 @@
-D:\Repos\ClienteServidor\client\src\test\java\com\app\client\models\HistorialDocumentoTest.java
-D:\Repos\ClienteServidor\client\src\test\java\com\app\client\net\NetworkClientTcpTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/client/src/test/java/com/app/client/models/HistorialDocumentoTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/client/src/test/java/com/app/client/net/NetworkClientTcpTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/client/src/test/java/com/app/client/net/NetworkClientUdpTest.java

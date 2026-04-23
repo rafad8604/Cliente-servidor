@@ -3,19 +3,13 @@ package com.app.server.service;
 import com.app.server.dao.DocumentoDAO;
 import com.app.server.events.ServerEventBus;
 import com.app.server.models.Documento;
-import com.app.server.storage.Base64ChunkEncoder;
-import com.app.server.storage.ChunkRepository;
-import com.app.server.storage.ChunkedFileStorageService;
-import com.app.server.storage.DiskTempStorage;
-import com.app.server.storage.FixedSizeChunkSplitter;
-import com.app.server.storage.InMemoryDocumentReconstructor;
-import com.app.server.storage.JdbcChunkRepository;
 import com.app.shared.util.CryptoUtil;
 
 import javax.crypto.SecretKey;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PipedInputStream;
@@ -26,11 +20,7 @@ import java.util.List;
 /**
  * Servicio de negocio para documentos.
  *
- * Se apoya en colaboradores inyectados a través de interfaces (inversión de
- * dependencias):
- *   - {@link ChunkedFileStorageService} orquesta el flujo de archivos.
- *   - {@link InMemoryDocumentReconstructor} reconstruye en memoria.
- *   - {@link DocumentoDAO} (legado) para mensajes y consulta de metadatos.
+ * Persistencia basada en {@link DocumentoDAO} y cifrado con {@link CryptoUtil}.
  */
 public class DocumentoService {
 
@@ -38,8 +28,6 @@ public class DocumentoService {
 
     private final DocumentoDAO documentoDAO;
     private final SecretKey serverKey;
-    private final ChunkedFileStorageService fileStorage;
-    private final InMemoryDocumentReconstructor reconstructor;
 
     /**
      * Constructor de conveniencia: cablea las implementaciones por defecto.
@@ -55,31 +43,58 @@ public class DocumentoService {
         this.documentoDAO = new DocumentoDAO();
         this.serverKey = serverKey;
         new File(STORAGE_DIR).mkdirs();
-
-        ChunkRepository repository = new JdbcChunkRepository(documentoDAO);
-        Base64ChunkEncoder encoder = new Base64ChunkEncoder();
-
-        this.fileStorage = new ChunkedFileStorageService(
-                new DiskTempStorage(STORAGE_DIR),
-                new FixedSizeChunkSplitter(),
-                encoder,
-                repository,
-                eventBus,
-                serverKey);
-
-        this.reconstructor = new InMemoryDocumentReconstructor(repository, encoder, eventBus);
     }
 
     /**
-     * Nuevo flujo:
-     *   1. stream → disco local
-     *   2. hash SHA-256
-     *   3. encriptar → chunks 1MB → Base64 → BD
-     *   4. guardar metadatos
+     * Flujo de archivo:
+     *   1. stream -> disco local (original)
+     *   2. hash SHA-256 del original
+     *   3. encriptar a archivo temporal (IV + cipher)
+     *   4. persistir en chunks en BD
      */
     public Documento procesarArchivo(String nombre, long tamano, String ipOrigen, InputStream dataIn)
             throws IOException, GeneralSecurityException, java.sql.SQLException {
-        return fileStorage.procesarArchivo(nombre, tamano, ipOrigen, dataIn);
+        File storageDir = new File(STORAGE_DIR);
+        storageDir.mkdirs();
+
+        String safeName = sanitizeFileName(nombre);
+        File originalFile = new File(storageDir, System.currentTimeMillis() + "_" + safeName);
+
+        // Guardar stream entrante en disco para permitir descarga original posterior.
+        try (FileOutputStream fos = new FileOutputStream(originalFile)) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = dataIn.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+            }
+        }
+
+        long actualSize = originalFile.length();
+        String hash = CryptoUtil.hashSHA256(originalFile);
+
+        File encryptedTmp = new File(storageDir, originalFile.getName() + ".enc.tmp");
+        CryptoUtil.encryptFile(originalFile, encryptedTmp, serverKey);
+
+        Documento doc = new Documento(
+                safeName,
+                extensionOf(safeName),
+                actualSize,
+                originalFile.getAbsolutePath(),
+                hash,
+                ipOrigen,
+                Documento.Tipo.ARCHIVO
+        );
+
+        try (FileInputStream fis = new FileInputStream(encryptedTmp)) {
+            long docId = documentoDAO.insertarConChunks(doc, fis);
+            doc.setId(docId);
+        } finally {
+            if (encryptedTmp.exists()) {
+                encryptedTmp.delete();
+            }
+        }
+
+        return doc;
     }
 
     /**
@@ -122,8 +137,8 @@ public class DocumentoService {
             }
         }
 
-        // Reconstruir encriptado desde chunks (el reconstructor decodifica Base64)
-        InputStream encriptadoStream = reconstructor.openStream(documentoId);
+        // Si el original no existe localmente, reconstruir desde chunks encriptados.
+        InputStream encriptadoStream = documentoDAO.getDocumentoStream(documentoId);
 
         byte[] iv = new byte[16];
         int read = encriptadoStream.read(iv);
@@ -151,10 +166,9 @@ public class DocumentoService {
 
     /**
      * Stream encriptado (sin decodificar) tal como se puede enviar a un cliente.
-     * Internamente decodifica Base64 → bytes encriptados.
      */
     public InputStream getArchivoEncriptadoStream(long documentoId) throws Exception {
-        return reconstructor.openStream(documentoId);
+        return documentoDAO.getDocumentoStream(documentoId);
     }
 
     /**
@@ -162,15 +176,9 @@ public class DocumentoService {
      * Apto para archivos en el orden de MB.
      */
     public byte[] reconstruirEnMemoria(long documentoId) throws Exception {
-        byte[] encriptadoConIv = reconstructor.rebuildInMemory(documentoId);
-        if (encriptadoConIv.length < 16) {
-            throw new IOException("Documento sin IV");
+        try (InputStream in = getArchivoOriginalStream(documentoId)) {
+            return in.readAllBytes();
         }
-        byte[] iv = new byte[16];
-        System.arraycopy(encriptadoConIv, 0, iv, 0, 16);
-        byte[] cipher = new byte[encriptadoConIv.length - 16];
-        System.arraycopy(encriptadoConIv, 16, cipher, 0, cipher.length);
-        return CryptoUtil.decrypt(cipher, serverKey, iv);
     }
 
     public String getHash(long documentoId) throws java.sql.SQLException {
@@ -197,5 +205,19 @@ public class DocumentoService {
 
     public Documento obtenerDocumento(long id) throws java.sql.SQLException {
         return documentoDAO.obtenerPorId(id);
+    }
+
+    private static String sanitizeFileName(String name) {
+        if (name == null || name.isBlank()) {
+            return "archivo_" + System.currentTimeMillis();
+        }
+        return new File(name).getName();
+    }
+
+    private static String extensionOf(String fileName) {
+        if (fileName == null) return "";
+        int idx = fileName.lastIndexOf('.');
+        if (idx < 0 || idx == fileName.length() - 1) return "";
+        return fileName.substring(idx + 1).toLowerCase();
     }
 }

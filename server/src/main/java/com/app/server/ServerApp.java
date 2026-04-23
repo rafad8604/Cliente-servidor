@@ -5,6 +5,7 @@ import com.app.server.dao.DatabaseConnection;
 import com.app.server.events.ConsoleServerEventListener;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
+import com.app.server.http.HttpGateway;
 import com.app.server.net.ServerCore;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
@@ -25,6 +26,7 @@ public class ServerApp {
 
     private static final int TCP_PORT = 9000;
     private static final int UDP_PORT = 9001;
+    private static final int HTTP_PORT = 8080;
     private static final int MAX_CLIENTS = 10;
 
     public static void main(String[] args) {
@@ -39,7 +41,7 @@ public class ServerApp {
 
         System.out.println("============================================");
         System.out.println("  SERVIDOR DE MENSAJERÍA Y ARCHIVOS");
-        System.out.println("  TCP: " + TCP_PORT + " | UDP: " + UDP_PORT);
+        System.out.println("  TCP: " + TCP_PORT + " | UDP: " + UDP_PORT + " | HTTP: " + HTTP_PORT);
         System.out.println("============================================");
 
         ServerEventBus eventBus = new ServerEventBus();
@@ -63,8 +65,12 @@ public class ServerApp {
                     documentoService, logService, eventBus);
             server.start();
 
+                HttpGateway httpGateway = new HttpGateway(HTTP_PORT, documentoService, logService);
+                httpGateway.start();
+                System.out.println("[HTTP] Interfaz web disponible en http://localhost:" + HTTP_PORT);
+
             logService.registrar("SERVIDOR_INICIADO", "localhost",
-                    "TCP:" + TCP_PORT + " UDP:" + UDP_PORT + " MaxClientes:" + MAX_CLIENTS);
+                    "TCP:" + TCP_PORT + " UDP:" + UDP_PORT + " HTTP:" + HTTP_PORT + " MaxClientes:" + MAX_CLIENTS);
 
             System.out.println("\nComandos: status | events on | events off | exit\n");
             Scanner scanner = new Scanner(System.in);
@@ -87,6 +93,7 @@ public class ServerApp {
             }
 
             System.out.println("[SHUTDOWN] Deteniendo servidor...");
+            httpGateway.stop();
             server.stop();
             DatabaseConnection.getInstance().shutdown();
             logService.registrar("SERVIDOR_DETENIDO", "localhost", "Servidor detenido manualmente");
