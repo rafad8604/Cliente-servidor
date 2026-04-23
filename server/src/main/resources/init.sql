@@ -18,10 +18,13 @@ CREATE TABLE IF NOT EXISTS logs (
 CREATE TABLE IF NOT EXISTS clientes_conectados (
     ip VARCHAR(45) NOT NULL,
     puerto INT NOT NULL,
-    protocolo VARCHAR(3) NOT NULL COMMENT 'TCP o UDP',
+    protocolo VARCHAR(10) NOT NULL COMMENT 'TCP, UDP o HTTP',
     fecha_inicio DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (ip, puerto)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE clientes_conectados
+    MODIFY COLUMN protocolo VARCHAR(10) NOT NULL COMMENT 'TCP, UDP o HTTP';
 
 -- Tabla principal de documentos (metadatos)
 CREATE TABLE IF NOT EXISTS documentos (
