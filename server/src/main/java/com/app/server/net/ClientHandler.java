@@ -1,6 +1,8 @@
 package com.app.server.net;
 
 import com.app.server.dao.ClienteConectadoDAO;
+import com.app.server.events.ServerEventBus;
+import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.service.DocumentoService;
@@ -11,56 +13,72 @@ import com.app.shared.protocol.Mensaje;
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 
 /**
- * Maneja una conexión individual de un cliente TCP.
- * Procesa comandos JSON de metadata y streams binarios.
+ * Maneja una conexión TCP individual.
+ *
+ * Tras el refactor:
+ *   - Usa {@link TcpClientChannel} (abstracción) para enviar respuestas.
+ *   - Usa {@link CommandDispatcher} para comandos "simples" (sin stream).
+ *   - Publica eventos en el {@link ServerEventBus}.
+ *   - Sólo mantiene lógica específica de TCP para comandos con stream
+ *     (ENVIAR_ARCHIVO / DESCARGAR_ARCHIVO / DESCARGAR_ENCRIPTADO).
  */
 public class ClientHandler implements Runnable, Closeable {
 
-    private final Socket socket;
+    private final TcpClientChannel channel;
     private final ClientPool pool;
     private final DocumentoService documentoService;
     private final LogService logService;
     private final ClienteConectadoDAO clienteDAO;
-    private final String clientIp;
-    private final int clientPort;
+    private final CommandDispatcher dispatcher;
+    private final ServerEventBus eventBus;
+    private final ClientContext ctx;
     private volatile boolean running = true;
 
-    public ClientHandler(Socket socket, ClientPool pool, DocumentoService documentoService,
-                         LogService logService) {
-        this.socket = socket;
+    /**
+     * Constructor principal (usado por {@link ServerCore}).
+     */
+    public ClientHandler(TcpClientChannel channel, ClientPool pool,
+                         DocumentoService documentoService, LogService logService,
+                         ServerEventBus eventBus) {
+        this.channel = channel;
         this.pool = pool;
         this.documentoService = documentoService;
         this.logService = logService;
         this.clienteDAO = new ClienteConectadoDAO();
-        this.clientIp = socket.getInetAddress().getHostAddress();
-        this.clientPort = socket.getPort();
+        this.eventBus = eventBus;
+        this.dispatcher = new CommandDispatcher(documentoService, logService, clienteDAO, eventBus);
+        this.ctx = channel.getContext();
+    }
+
+    /**
+     * Constructor de compatibilidad (Socket directo). Mantiene la firma usada
+     * por los tests existentes y crea internamente el adapter.
+     */
+    public ClientHandler(Socket socket, ClientPool pool,
+                         DocumentoService documentoService, LogService logService) {
+        this(new TcpClientChannel(socket), pool, documentoService, logService, null);
     }
 
     @Override
     public void run() {
-        System.out.println("[HANDLER] Cliente conectado: " + clientIp + ":" + clientPort);
+        System.out.println("[HANDLER] Cliente conectado: " + ctx);
 
         try {
-            // Registrar cliente
-            clienteDAO.registrar(new ClienteConectado(clientIp, clientPort, "TCP"));
-            logService.logConexion(clientIp, "TCP");
+            clienteDAO.registrar(new ClienteConectado(ctx.getIp(), ctx.getPort(), "TCP"));
+            if (logService != null) logService.logConexion(ctx.getIp(), "TCP");
 
-            // Enviar clave de sesión al cliente
-            // (En producción se haría Diffie-Hellman, pero aquí enviamos info de sesión)
             Mensaje sesion = new Mensaje(Comando.SESION_INFO)
                     .put("status", "CONECTADO")
                     .put("mensaje", "Conectado al servidor de mensajería");
-            enviarMensaje(sesion);
+            channel.sendMensaje(sesion);
 
-            InputStream socketIn = socket.getInputStream();
+            InputStream socketIn = channel.inputStream();
 
-            // Loop principal: leer comandos JSON
-            while (running && !socket.isClosed()) {
+            while (running && channel.isOpen()) {
                 String line = leerLinea(socketIn);
-                if (line == null) break; // Cliente desconectado
+                if (line == null) break;
 
                 line = line.trim();
                 if (line.isEmpty()) continue;
@@ -70,16 +88,19 @@ public class ClientHandler implements Runnable, Closeable {
                     procesarComando(msg, socketIn);
                 } catch (Exception e) {
                     System.err.println("[HANDLER] Error procesando comando: " + e.getMessage());
-                    enviarMensaje(Mensaje.error("Error procesando comando: " + e.getMessage()));
+                    if (eventBus != null) eventBus.publishError("tcp-handler", e, ctx);
+                    channel.sendMensaje(Mensaje.error("Error procesando comando: " + e.getMessage()));
                 }
             }
 
         } catch (IOException e) {
             if (running) {
-                System.err.println("[HANDLER] Error I/O con " + clientIp + ": " + e.getMessage());
+                System.err.println("[HANDLER] Error I/O con " + ctx + ": " + e.getMessage());
+                if (eventBus != null) eventBus.publishError("tcp-handler", e, ctx);
             }
         } catch (Exception e) {
             System.err.println("[HANDLER] Error inesperado: " + e.getMessage());
+            if (eventBus != null) eventBus.publishError("tcp-handler", e, ctx);
             e.printStackTrace();
         } finally {
             cleanup();
@@ -88,17 +109,26 @@ public class ClientHandler implements Runnable, Closeable {
 
     private void procesarComando(Mensaje msg, InputStream socketIn) throws Exception {
         Comando cmd = msg.getComando();
-        System.out.println("[HANDLER] Comando recibido de " + clientIp + ": " + cmd);
+        System.out.println("[HANDLER] Comando recibido de " + ctx.getIp() + ": " + cmd);
 
+        // Primero comandos específicos de TCP (con stream)
         switch (cmd) {
-            case ENVIAR_ARCHIVO -> procesarEnviarArchivo(msg, socketIn);
-            case ENVIAR_MENSAJE -> procesarEnviarMensaje(msg);
-            case LISTAR_DOCUMENTOS -> procesarListarDocumentos();
-            case DESCARGAR_ARCHIVO -> procesarDescargarArchivo(msg);
-            case DESCARGAR_HASH -> procesarDescargarHash(msg);
-            case DESCARGAR_ENCRIPTADO -> procesarDescargarEncriptado(msg);
-            case LISTAR_CLIENTES -> procesarListarClientes();
-            default -> enviarMensaje(Mensaje.error("Comando no reconocido: " + cmd));
+            case ENVIAR_ARCHIVO:
+                procesarEnviarArchivo(msg, socketIn);
+                return;
+            case DESCARGAR_ARCHIVO:
+                procesarDescargarArchivo(msg);
+                return;
+            case DESCARGAR_ENCRIPTADO:
+                procesarDescargarEncriptado(msg);
+                return;
+            default:
+                break;
+        }
+
+        // Luego delega en el dispatcher compartido
+        if (!dispatcher.dispatchSimple(channel, msg)) {
+            channel.sendMensaje(Mensaje.error("Comando no reconocido: " + cmd));
         }
     }
 
@@ -108,173 +138,73 @@ public class ClientHandler implements Runnable, Closeable {
 
         System.out.println("[HANDLER] Recibiendo archivo: " + nombre + " (" + tamano + " bytes)");
 
-        // Leer exactamente 'tamano' bytes del stream
         InputStream limitedStream = new BoundedInputStream(socketIn, tamano);
+        Documento doc = documentoService.procesarArchivo(nombre, tamano, ctx.getIp(), limitedStream);
 
-        Documento doc = documentoService.procesarArchivo(nombre, tamano, clientIp, limitedStream);
+        if (logService != null) logService.logArchivoRecibido(ctx.getIp(), nombre, tamano);
 
-        logService.logArchivoRecibido(clientIp, nombre, tamano);
-
-        Mensaje respuesta = Mensaje.respuestaOk("hash", doc.getHashSha256())
+        channel.sendMensaje(Mensaje.respuestaOk("hash", doc.getHashSha256())
                 .put("documentoId", doc.getId())
-                .put("mensaje", "Archivo recibido y procesado correctamente");
-
-        enviarMensaje(respuesta);
-    }
-
-    private void procesarEnviarMensaje(Mensaje msg) throws Exception {
-        String texto = msg.getString("texto");
-        if (texto == null || texto.isEmpty()) {
-            enviarMensaje(Mensaje.error("Mensaje vacío"));
-            return;
-        }
-
-        Documento doc = documentoService.procesarMensaje(texto, clientIp);
-        logService.logMensajeRecibido(clientIp);
-
-        Mensaje respuesta = Mensaje.respuestaOk("hash", doc.getHashSha256())
-                .put("documentoId", doc.getId())
-                .put("mensaje", "Mensaje recibido y procesado");
-
-        enviarMensaje(respuesta);
-    }
-
-    private void procesarListarDocumentos() throws Exception {
-        List<Documento> docs = documentoService.listarDocumentos();
-
-        // Convertir a JSON-friendly format
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < docs.size(); i++) {
-            Documento d = docs.get(i);
-            if (i > 0) sb.append(",");
-            sb.append(String.format(
-                    "{\"id\":%d,\"nombre\":\"%s\",\"extension\":\"%s\",\"tamano\":%d,\"tipo\":\"%s\",\"hash\":\"%s\",\"ip\":\"%s\",\"fecha\":\"%s\"}",
-                    d.getId(), escapeJson(d.getNombre()), escapeJson(d.getExtension() != null ? d.getExtension() : ""),
-                    d.getTamano(), d.getTipo().name(), d.getHashSha256(), d.getIpPropietario(),
-                    d.getFechaCreacion().toString()));
-        }
-        sb.append("]");
-
-        Mensaje respuesta = Mensaje.respuestaOk("documentos", sb.toString())
-                .put("total", docs.size());
-        enviarMensaje(respuesta);
+                .put("mensaje", "Archivo recibido y procesado correctamente"));
     }
 
     private void procesarDescargarArchivo(Mensaje msg) throws Exception {
         long docId = msg.getLong("documentoId");
         Documento doc = documentoService.obtenerDocumento(docId);
         if (doc == null) {
-            enviarMensaje(Mensaje.error("Documento no encontrado: " + docId));
+            channel.sendMensaje(Mensaje.error("Documento no encontrado: " + docId));
             return;
         }
 
-        logService.logDescarga(clientIp, doc.getNombre(), "ORIGINAL");
+        if (logService != null) logService.logDescarga(ctx.getIp(), doc.getNombre(), "ORIGINAL");
 
-        // Obtener stream original
         InputStream stream = documentoService.getArchivoOriginalStream(docId);
         long tamanoReal = doc.getTamano();
         if (doc.getRutaLocalOriginal() != null) {
             File f = new File(doc.getRutaLocalOriginal());
-            if (f.exists()) {
-            tamanoReal = f.length();
-            }
+            if (f.exists()) tamanoReal = f.length();
         }
 
-        // Enviar metadatos primero
-        Mensaje header = Mensaje.respuestaOk()
+        channel.sendMensaje(Mensaje.respuestaOk()
                 .put("nombre", doc.getNombre())
-            .put("tamano", tamanoReal)
+                .put("tamano", tamanoReal)
                 .put("hash", doc.getHashSha256())
-                .put("tipoDescarga", "ORIGINAL");
-        enviarMensaje(header);
+                .put("tipoDescarga", "ORIGINAL"));
 
-        // Luego enviar datos binarios
         enviarStream(stream, tamanoReal);
-    }
-
-    private void procesarDescargarHash(Mensaje msg) throws Exception {
-        long docId = msg.getLong("documentoId");
-        String hash = documentoService.getHash(docId);
-        if (hash == null) {
-            enviarMensaje(Mensaje.error("Documento no encontrado: " + docId));
-            return;
-        }
-
-        logService.logDescarga(clientIp, "doc-" + docId, "HASH");
-
-        byte[] hashBytes = hash.getBytes(StandardCharsets.UTF_8);
-        Mensaje respuesta = Mensaje.respuestaOk("hash", hash)
-                .put("tamano", hashBytes.length)
-                .put("tipoDescarga", "HASH");
-        enviarMensaje(respuesta);
     }
 
     private void procesarDescargarEncriptado(Mensaje msg) throws Exception {
         long docId = msg.getLong("documentoId");
         Documento doc = documentoService.obtenerDocumento(docId);
         if (doc == null) {
-            enviarMensaje(Mensaje.error("Documento no encontrado: " + docId));
+            channel.sendMensaje(Mensaje.error("Documento no encontrado: " + docId));
             return;
         }
 
-        logService.logDescarga(clientIp, doc.getNombre(), "ENCRIPTADO");
+        if (logService != null) logService.logDescarga(ctx.getIp(), doc.getNombre(), "ENCRIPTADO");
 
         InputStream stream = documentoService.getArchivoEncriptadoStream(docId);
 
-        // Para encriptado, no sabemos el tamaño exacto fácilmente, usamos -1
-        Mensaje header = Mensaje.respuestaOk()
+        channel.sendMensaje(Mensaje.respuestaOk()
                 .put("nombre", doc.getNombre() + ".enc")
                 .put("tamano", -1L)
                 .put("hash", doc.getHashSha256())
-                .put("tipoDescarga", "ENCRIPTADO");
-        enviarMensaje(header);
+                .put("tipoDescarga", "ENCRIPTADO"));
 
-        // Enviar chunks con marcador de fin
         enviarStreamConFin(stream);
     }
 
-    private void procesarListarClientes() throws Exception {
-        List<ClienteConectado> clientes = clienteDAO.listarTodos();
-
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < clientes.size(); i++) {
-            ClienteConectado c = clientes.get(i);
-            if (i > 0) sb.append(",");
-            sb.append(String.format(
-                    "{\"ip\":\"%s\",\"puerto\":%d,\"protocolo\":\"%s\",\"fechaInicio\":\"%s\"}",
-                    c.getIp(), c.getPuerto(), c.getProtocolo(), c.getFechaInicio().toString()));
-        }
-        sb.append("]");
-
-        Mensaje respuesta = Mensaje.respuestaOk("clientes", sb.toString())
-                .put("total", clientes.size());
-        enviarMensaje(respuesta);
-    }
-
-    // --- Métodos de utilidad de red ---
-
-    private void enviarMensaje(Mensaje msg) throws IOException {
-        String json = msg.toJson() + "\n";
-        synchronized (socket.getOutputStream()) {
-            socket.getOutputStream().write(json.getBytes(StandardCharsets.UTF_8));
-            socket.getOutputStream().flush();
-        }
-    }
-
     private void enviarStream(InputStream stream, long expectedSize) throws IOException {
-        DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
         byte[] buffer = new byte[8192];
         int bytesRead;
         long totalSent = 0;
         try {
             while ((bytesRead = stream.read(buffer)) != -1) {
-                synchronized (socket.getOutputStream()) {
-                    dos.write(buffer, 0, bytesRead);
-                }
+                channel.sendBytes(buffer, 0, bytesRead);
                 totalSent += bytesRead;
             }
-
-            dos.flush();
+            channel.flush();
             if (expectedSize >= 0 && totalSent != expectedSize) {
                 throw new IOException("Transferencia incompleta: enviados=" + totalSent + " esperado=" + expectedSize);
             }
@@ -285,57 +215,43 @@ public class ClientHandler implements Runnable, Closeable {
     }
 
     private void enviarStreamConFin(InputStream stream) throws IOException {
-        DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
         byte[] buffer = new byte[8192];
         int bytesRead;
         long totalSent = 0;
-
-        while ((bytesRead = stream.read(buffer)) != -1) {
-            synchronized (socket.getOutputStream()) {
-                dos.writeInt(bytesRead); // Enviar tamaño del bloque
-                dos.write(buffer, 0, bytesRead);
+        try {
+            while ((bytesRead = stream.read(buffer)) != -1) {
+                channel.sendChunkedBlock(buffer, bytesRead);
+                totalSent += bytesRead;
             }
-            totalSent += bytesRead;
+            // Marcador de fin
+            channel.sendChunkedBlock(new byte[0], 0);
+            channel.flush();
+            System.out.println("[HANDLER] Stream encriptado enviado: " + totalSent + " bytes");
+        } finally {
+            stream.close();
         }
-        // Marcador de fin
-        synchronized (socket.getOutputStream()) {
-            dos.writeInt(0);
-            dos.flush();
-        }
-        stream.close();
-        System.out.println("[HANDLER] Stream encriptado enviado: " + totalSent + " bytes");
     }
 
     private void cleanup() {
         try {
-            clienteDAO.eliminar(clientIp, clientPort);
+            clienteDAO.eliminar(ctx.getIp(), ctx.getPort());
         } catch (Exception e) {
             System.err.println("[HANDLER] Error eliminando cliente: " + e.getMessage());
         }
-        logService.logDesconexion(clientIp);
+        if (logService != null) logService.logDesconexion(ctx.getIp());
         pool.unregisterHandler(this);
         pool.release();
-        try {
-            if (!socket.isClosed()) socket.close();
-        } catch (IOException e) {
-            // ignore
+        channel.close();
+        if (eventBus != null) {
+            eventBus.publish(ServerEventType.TCP_CONEXION_CERRADA, ctx, null);
         }
-        System.out.println("[HANDLER] Cliente desconectado: " + clientIp + ":" + clientPort);
+        System.out.println("[HANDLER] Cliente desconectado: " + ctx);
     }
 
     @Override
     public void close() {
         running = false;
-        try {
-            if (!socket.isClosed()) socket.close();
-        } catch (IOException e) {
-            // ignore
-        }
-    }
-
-    private String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        channel.close();
     }
 
     private String leerLinea(InputStream input) throws IOException {
@@ -348,12 +264,8 @@ public class ClientHandler implements Runnable, Closeable {
                 }
                 break;
             }
-            if (b == '\n') {
-                break;
-            }
-            if (b != '\r') {
-                lineBuffer.write(b);
-            }
+            if (b == '\n') break;
+            if (b != '\r') lineBuffer.write(b);
         }
         return lineBuffer.toString(StandardCharsets.UTF_8);
     }
@@ -362,7 +274,7 @@ public class ClientHandler implements Runnable, Closeable {
      * InputStream que limita la lectura a un número específico de bytes.
      * Evita que el handler lea más allá del archivo en el stream compartido.
      */
-    private static class BoundedInputStream extends InputStream {
+    static class BoundedInputStream extends InputStream {
         private final InputStream in;
         private long remaining;
 

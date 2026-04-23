@@ -11,40 +11,139 @@ import java.util.List;
 
 /**
  * DAO para las tablas 'documentos' y 'documentos_chunks'.
- * IMPLEMENTACIÓN CRÍTICA: Soporta archivos >1GB mediante chunking en bloques de 50MB.
+ *
+ * Soporta dos flujos:
+ *  - Legado: {@link #insertarConChunks(Documento, InputStream)} inserta RAW.
+ *  - Nuevo : {@link #insertarMetadatos(Documento)} + {@link #insertarChunk}
+ *    para persistir chunks codificados (Base64). Usado por el paquete
+ *    {@code com.app.server.storage} a través de {@code ChunkRepository}.
  */
 public class DocumentoDAO {
 
-    private static final int CHUNK_SIZE = 50 * 1024 * 1024; // 50MB por chunk
+    private static final int CHUNK_SIZE = 50 * 1024 * 1024;
 
     private final DatabaseConnection dbPool;
+    private volatile Boolean codificacionColumnPresent;
 
     public DocumentoDAO() {
         this.dbPool = DatabaseConnection.getInstance();
     }
 
+    // =========================================================================
+    // API NUEVA (flujo orientado a interfaces con codificación explícita)
+    // =========================================================================
+
     /**
-     * Inserta un documento con sus chunks encriptados en una transacción atómica.
-     * Lee el InputStream en bloques de 50MB y hace un INSERT por cada bloque.
-     *
-     * @param doc    Metadatos del documento
-     * @param stream InputStream de datos encriptados (puede ser >1GB)
-     * @return ID del documento insertado
+     * Inserta únicamente los metadatos y devuelve el ID generado.
+     * Usado por el nuevo servicio de almacenamiento basado en chunks Base64.
      */
+    public long insertarMetadatos(Documento doc) throws SQLException {
+        Connection conn = dbPool.getConnection();
+        try {
+            long id = insertarDocumento(conn, doc);
+            return id;
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+    }
+
+    /**
+     * Inserta un único chunk ya codificado.
+     */
+    public void insertarChunk(long documentoId, int chunkIndex, byte[] datos, String codificacion)
+            throws SQLException {
+        Connection conn = dbPool.getConnection();
+        try {
+            String sql;
+            boolean hasCol = hasCodificacionColumn(conn);
+            if (hasCol) {
+                sql = "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados, codificacion) " +
+                        "VALUES (?, ?, ?, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setLong(1, documentoId);
+                    ps.setInt(2, chunkIndex);
+                    ps.setBytes(3, datos);
+                    ps.setString(4, codificacion == null ? "RAW" : codificacion);
+                    ps.executeUpdate();
+                }
+            } else {
+                sql = "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados) " +
+                        "VALUES (?, ?, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setLong(1, documentoId);
+                    ps.setInt(2, chunkIndex);
+                    ps.setBytes(3, datos);
+                    ps.executeUpdate();
+                }
+            }
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+    }
+
+    /**
+     * Lee un chunk y su codificación declarada.
+     */
+    public StoredChunk obtenerChunk(long documentoId, int chunkIndex) throws SQLException {
+        Connection conn = dbPool.getConnection();
+        try {
+            boolean hasCol = hasCodificacionColumn(conn);
+            String sql = hasCol
+                    ? "SELECT datos_encriptados, codificacion FROM documentos_chunks WHERE documento_id = ? AND chunk_index = ?"
+                    : "SELECT datos_encriptados FROM documentos_chunks WHERE documento_id = ? AND chunk_index = ?";
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, documentoId);
+                ps.setInt(2, chunkIndex);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        byte[] data = rs.getBytes("datos_encriptados");
+                        String cod = hasCol ? rs.getString("codificacion") : "RAW";
+                        return new StoredChunk(data, cod);
+                    }
+                }
+            }
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+        return null;
+    }
+
+    public int contarChunks(long documentoId) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM documentos_chunks WHERE documento_id = ?";
+        Connection conn = dbPool.getConnection();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, documentoId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+    }
+
+    // =========================================================================
+    // API LEGADA (se mantiene para compatibilidad con DocumentoService original)
+    // =========================================================================
+
+    /**
+     * @deprecated Use {@code ChunkedFileStorageService} (paquete storage).
+     */
+    @Deprecated
     public long insertarConChunks(Documento doc, InputStream stream) throws SQLException, IOException {
         Connection conn = dbPool.getConnection();
         try {
             conn.setAutoCommit(false);
-
-            // 1. Insertar metadatos del documento
             long docId = insertarDocumento(conn, doc);
 
-            // 2. Leer stream en bloques y crear chunks
             int chunkIndex = 0;
             byte[] buffer = new byte[CHUNK_SIZE];
             int bytesRead;
 
-            String chunkSql = "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados) VALUES (?, ?, ?)";
+            boolean hasCol = hasCodificacionColumn(conn);
+            String chunkSql = hasCol
+                    ? "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados, codificacion) VALUES (?, ?, ?, ?)"
+                    : "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados) VALUES (?, ?, ?)";
 
             while ((bytesRead = readFully(stream, buffer)) > 0) {
                 byte[] chunkData;
@@ -59,6 +158,7 @@ public class DocumentoDAO {
                     ps.setLong(1, docId);
                     ps.setInt(2, chunkIndex);
                     ps.setBytes(3, chunkData);
+                    if (hasCol) ps.setString(4, "RAW");
                     ps.executeUpdate();
                 }
 
@@ -67,7 +167,7 @@ public class DocumentoDAO {
             }
 
             conn.commit();
-            System.out.println("[DAO] Documento ID=" + docId + " insertado con " + chunkIndex + " chunks.");
+            System.out.println("[DAO] Documento ID=" + docId + " insertado con " + chunkIndex + " chunks (legado).");
             return docId;
 
         } catch (Exception e) {
@@ -79,22 +179,21 @@ public class DocumentoDAO {
         }
     }
 
-    /**
-     * Inserta un documento de tipo MENSAJE (sin chunks de archivo grande).
-     * Los datos encriptados del mensaje se almacenan como un solo chunk.
-     */
     public long insertarMensaje(Documento doc, byte[] datosEncriptados) throws SQLException {
         Connection conn = dbPool.getConnection();
         try {
             conn.setAutoCommit(false);
-
             long docId = insertarDocumento(conn, doc);
 
-            String chunkSql = "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados) VALUES (?, ?, ?)";
+            boolean hasCol = hasCodificacionColumn(conn);
+            String chunkSql = hasCol
+                    ? "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados, codificacion) VALUES (?, ?, ?, ?)"
+                    : "INSERT INTO documentos_chunks (documento_id, chunk_index, datos_encriptados) VALUES (?, ?, ?)";
             try (PreparedStatement ps = conn.prepareStatement(chunkSql)) {
                 ps.setLong(1, docId);
                 ps.setInt(2, 0);
                 ps.setBytes(3, datosEncriptados);
+                if (hasCol) ps.setString(4, "RAW");
                 ps.executeUpdate();
             }
 
@@ -111,69 +210,31 @@ public class DocumentoDAO {
     }
 
     /**
-     * Reconstruye el stream de datos encriptados de un documento,
-     * concatenando todos sus chunks ordenados.
-     * Retorna un SequenceInputStream que lee los chunks bajo demanda.
+     * Reconstruye el stream de datos encriptados de un documento. Si los
+     * chunks están en BASE64, los decodifica sobre la marcha.
      */
     public InputStream getDocumentoStream(long documentoId) throws SQLException {
-        Connection conn = dbPool.getConnection();
-        try {
-            // Obtener cantidad de chunks
-            String countSql = "SELECT COUNT(*) FROM documentos_chunks WHERE documento_id = ?";
-            int totalChunks;
-            try (PreparedStatement ps = conn.prepareStatement(countSql)) {
-                ps.setLong(1, documentoId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    totalChunks = rs.getInt(1);
-                }
-            }
-
-            if (totalChunks == 0) {
-                dbPool.releaseConnection(conn);
-                return new ByteArrayInputStream(new byte[0]);
-            }
-
-            // Crear InputStreams lazily para cada chunk
-            List<InputStream> streams = new ArrayList<>();
-            for (int i = 0; i < totalChunks; i++) {
-                final int chunkIdx = i;
-                streams.add(new LazyChunkInputStream(documentoId, chunkIdx));
-            }
-
-            dbPool.releaseConnection(conn);
-
-            Enumeration<InputStream> enumeration = Collections.enumeration(streams);
-            return new SequenceInputStream(enumeration);
-
-        } catch (Exception e) {
-            dbPool.releaseConnection(conn);
-            throw e;
+        int totalChunks = contarChunks(documentoId);
+        if (totalChunks == 0) {
+            return new ByteArrayInputStream(new byte[0]);
         }
+        List<InputStream> streams = new ArrayList<>();
+        for (int i = 0; i < totalChunks; i++) {
+            streams.add(new LazyChunkInputStream(documentoId, i));
+        }
+        Enumeration<InputStream> enumeration = Collections.enumeration(streams);
+        return new SequenceInputStream(enumeration);
     }
 
-    /**
-     * Obtiene los datos encriptados de un mensaje (un solo chunk).
-     */
     public byte[] getMensajeDatos(long documentoId) throws SQLException {
-        String sql = "SELECT datos_encriptados FROM documentos_chunks WHERE documento_id = ? AND chunk_index = 0";
-        Connection conn = dbPool.getConnection();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, documentoId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getBytes("datos_encriptados");
-                }
-            }
-        } finally {
-            dbPool.releaseConnection(conn);
+        StoredChunk sc = obtenerChunk(documentoId, 0);
+        if (sc == null) return null;
+        if ("BASE64".equalsIgnoreCase(sc.getCodificacion())) {
+            return java.util.Base64.getDecoder().decode(sc.getDatos());
         }
-        return null;
+        return sc.getDatos();
     }
 
-    /**
-     * Obtiene los metadatos de un documento por ID.
-     */
     public Documento obtenerPorId(long id) throws SQLException {
         String sql = "SELECT * FROM documentos WHERE id = ?";
         Connection conn = dbPool.getConnection();
@@ -190,9 +251,6 @@ public class DocumentoDAO {
         return null;
     }
 
-    /**
-     * Lista todos los documentos (solo metadatos).
-     */
     public List<Documento> listarTodos() throws SQLException {
         String sql = "SELECT * FROM documentos ORDER BY fecha_creacion DESC";
         List<Documento> docs = new ArrayList<>();
@@ -208,9 +266,6 @@ public class DocumentoDAO {
         return docs;
     }
 
-    /**
-     * Lista documentos filtrados por tipo.
-     */
     public List<Documento> listarPorTipo(Documento.Tipo tipo) throws SQLException {
         String sql = "SELECT * FROM documentos WHERE tipo = ? ORDER BY fecha_creacion DESC";
         List<Documento> docs = new ArrayList<>();
@@ -228,7 +283,9 @@ public class DocumentoDAO {
         return docs;
     }
 
-    // --- Métodos privados ---
+    // =========================================================================
+    // Internos
+    // =========================================================================
 
     private long insertarDocumento(Connection conn, Documento doc) throws SQLException {
         String sql = "INSERT INTO documentos (nombre, extension, tamano, ruta_local_original, hash_sha256, ip_propietario, tipo) " +
@@ -268,10 +325,6 @@ public class DocumentoDAO {
         return doc;
     }
 
-    /**
-     * Lee exactamente 'buffer.length' bytes del stream, o menos si llega a EOF.
-     * A diferencia de InputStream.read(), esto llena el buffer completamente.
-     */
     private int readFully(InputStream stream, byte[] buffer) throws IOException {
         int totalRead = 0;
         int remaining = buffer.length;
@@ -285,8 +338,44 @@ public class DocumentoDAO {
     }
 
     /**
-     * InputStream lazy que lee un chunk específico de la base de datos bajo demanda.
-     * Esto evita cargar todos los chunks en memoria simultáneamente.
+     * Detecta (con cache) si la tabla tiene la columna {@code codificacion}.
+     * Permite compatibilidad con BDs que aún no han sido migradas.
+     */
+    private boolean hasCodificacionColumn(Connection conn) {
+        Boolean cached = codificacionColumnPresent;
+        if (cached != null) return cached;
+        synchronized (this) {
+            if (codificacionColumnPresent != null) return codificacionColumnPresent;
+            try (ResultSet rs = conn.getMetaData().getColumns(
+                    conn.getCatalog(), null, "documentos_chunks", "codificacion")) {
+                codificacionColumnPresent = rs.next();
+            } catch (SQLException e) {
+                codificacionColumnPresent = Boolean.FALSE;
+            }
+            return codificacionColumnPresent;
+        }
+    }
+
+    /**
+     * Chunk crudo tal como está en la BD (sin decodificar), junto con la
+     * codificación declarada.
+     */
+    public static final class StoredChunk {
+        private final byte[] datos;
+        private final String codificacion;
+
+        public StoredChunk(byte[] datos, String codificacion) {
+            this.datos = datos;
+            this.codificacion = codificacion == null ? "RAW" : codificacion;
+        }
+
+        public byte[] getDatos() { return datos; }
+        public String getCodificacion() { return codificacion; }
+    }
+
+    /**
+     * InputStream perezoso que decodifica según la codificación declarada
+     * (Base64 → binario, RAW → pass-through).
      */
     private class LazyChunkInputStream extends InputStream {
         private final long documentoId;
@@ -300,30 +389,22 @@ public class DocumentoDAO {
         }
 
         private void loadIfNeeded() throws IOException {
-            if (!loaded) {
-                String sql = "SELECT datos_encriptados FROM documentos_chunks WHERE documento_id = ? AND chunk_index = ?";
-                Connection conn = null;
-                try {
-                    conn = dbPool.getConnection();
-                    try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                        ps.setLong(1, documentoId);
-                        ps.setInt(2, chunkIndex);
-                        try (ResultSet rs = ps.executeQuery()) {
-                            if (rs.next()) {
-                                byte[] data = rs.getBytes("datos_encriptados");
-                                inner = new ByteArrayInputStream(data);
-                            } else {
-                                inner = new ByteArrayInputStream(new byte[0]);
-                            }
-                        }
-                    }
-                } catch (SQLException e) {
-                    throw new IOException("Error cargando chunk " + chunkIndex, e);
-                } finally {
-                    if (conn != null) dbPool.releaseConnection(conn);
+            if (loaded) return;
+            try {
+                StoredChunk sc = obtenerChunk(documentoId, chunkIndex);
+                byte[] data;
+                if (sc == null) {
+                    data = new byte[0];
+                } else if ("BASE64".equalsIgnoreCase(sc.getCodificacion())) {
+                    data = java.util.Base64.getDecoder().decode(sc.getDatos());
+                } else {
+                    data = sc.getDatos();
                 }
-                loaded = true;
+                inner = new ByteArrayInputStream(data);
+            } catch (SQLException e) {
+                throw new IOException("Error cargando chunk " + chunkIndex, e);
             }
+            loaded = true;
         }
 
         @Override

@@ -1,91 +1,92 @@
 package com.app.server.net;
 
+import com.app.server.events.ServerEventBus;
+import com.app.server.events.ServerEventType;
+import com.app.server.pool.ResourcePool;
+import com.app.server.pool.SemaphoreResourcePool;
+
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Semaphore;
 
 /**
- * Patrón Object Pool para limitar el número de clientes concurrentes.
- * Usa un Semaphore para controlar la concurrencia.
+ * Object Pool de clientes.
+ *
+ * Sigue el patrón Adapter: delega el control de capacidad/concurrencia a un
+ * {@link ResourcePool}. El resto del servidor habla con esta clase y nunca
+ * directamente con el {@link java.util.concurrent.Semaphore} subyacente.
+ *
+ * La API pública (tryAcquire / acquire / release / getActiveCount /
+ * getMaxClients / registerHandler / unregisterHandler / shutdownAll /
+ * getActiveHandlers) se mantiene intacta para no romper tests ni otros
+ * consumidores.
  */
 public class ClientPool {
 
-    private final int maxClients;
-    private final Semaphore semaphore;
+    private final ResourcePool resourcePool;
     private final Set<ClientHandler> activeHandlers;
+    private final ServerEventBus eventBus;
 
     public ClientPool(int maxClients) {
-        this.maxClients = maxClients;
-        this.semaphore = new Semaphore(maxClients, true); // fair queue
+        this(new SemaphoreResourcePool("default-pool", maxClients), null);
+    }
+
+    public ClientPool(ResourcePool resourcePool, ServerEventBus eventBus) {
+        this.resourcePool = resourcePool;
         this.activeHandlers = ConcurrentHashMap.newKeySet();
+        this.eventBus = eventBus;
     }
 
-    /**
-     * Intenta adquirir un slot en el pool. Bloquea hasta que haya uno disponible.
-     *
-     * @return true si se obtuvo el slot
-     * @throws InterruptedException si el hilo fue interrumpido mientras esperaba
-     */
     public boolean acquire() throws InterruptedException {
-        semaphore.acquire();
-        return true;
+        boolean ok = resourcePool.acquire();
+        if (ok && eventBus != null) {
+            eventBus.publish(ServerEventType.POOL_ADQUIRIDO, resourcePool.getName(),
+                    "active=" + getActiveCount() + "/" + getMaxClients());
+        }
+        return ok;
     }
 
-    /**
-     * Intenta adquirir un slot sin bloquear.
-     *
-     * @return true si se obtuvo el slot, false si el pool está lleno
-     */
     public boolean tryAcquire() {
-        return semaphore.tryAcquire();
+        boolean ok = resourcePool.tryAcquire();
+        if (ok && eventBus != null) {
+            eventBus.publish(ServerEventType.POOL_ADQUIRIDO, resourcePool.getName(),
+                    "active=" + getActiveCount() + "/" + getMaxClients());
+        }
+        return ok;
     }
 
-    /**
-     * Libera un slot en el pool.
-     */
     public void release() {
-        semaphore.release();
+        resourcePool.release();
+        if (eventBus != null) {
+            eventBus.publish(ServerEventType.POOL_LIBERADO, resourcePool.getName(),
+                    "active=" + getActiveCount() + "/" + getMaxClients());
+        }
     }
 
-    /**
-     * Registra un handler activo.
-     */
     public void registerHandler(ClientHandler handler) {
         activeHandlers.add(handler);
     }
 
-    /**
-     * Elimina un handler del registro.
-     */
     public void unregisterHandler(ClientHandler handler) {
         activeHandlers.remove(handler);
     }
 
-    /**
-     * Obtiene el número de clientes actualmente conectados.
-     */
     public int getActiveCount() {
-        return maxClients - semaphore.availablePermits();
+        return resourcePool.getActiveCount();
     }
 
-    /**
-     * Obtiene el número máximo de clientes permitidos.
-     */
     public int getMaxClients() {
-        return maxClients;
+        return resourcePool.getCapacity();
     }
 
-    /**
-     * Obtiene los handlers activos (solo lectura).
-     */
+    public String getName() {
+        return resourcePool.getName();
+    }
+
     public Set<ClientHandler> getActiveHandlers() {
         return Collections.unmodifiableSet(activeHandlers);
     }
 
-    /**
-     * Cierra todos los handlers activos (para shutdown).
-     */
     public void shutdownAll() {
         for (ClientHandler handler : activeHandlers) {
             try {
