@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.app.server.http.HttpGatewayTest
 -------------------------------------------------------------------------------
-Tests run: 12, Failures: 0, Errors: 0, Skipped: 12, Time elapsed: 0.001 s -- in com.app.server.http.HttpGatewayTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 12, Time elapsed: 0 s -- in com.app.server.http.HttpGatewayTest
