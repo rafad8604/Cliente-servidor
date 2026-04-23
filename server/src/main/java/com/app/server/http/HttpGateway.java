@@ -7,6 +7,7 @@ import com.app.server.models.Documento;
 import com.app.server.models.Log;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
+import com.app.shared.protocol.Mensaje;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.sun.net.httpserver.HttpExchange;
@@ -23,10 +24,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 
 /**
@@ -40,6 +44,8 @@ public class HttpGateway {
     private final ClienteConectadoDAO clienteConectadoDAO;
     private final LogDAO logDAO;
     private final Gson gson;
+    private final Map<String, ClienteConectado> sesionesHttp = new ConcurrentHashMap<>();
+    private final List<Map<String, Object>> chatHistory = Collections.synchronizedList(new ArrayList<>());
 
     private HttpServer server;
 
@@ -65,6 +71,10 @@ public class HttpGateway {
         server.createContext("/api/clientes", this::handleClientes);
         server.createContext("/api/logs", this::handleLogs);
         server.createContext("/api/upload", this::handleUpload);
+        server.createContext("/api/connect", this::handleConnect);
+        server.createContext("/api/disconnect", this::handleDisconnect);
+        server.createContext("/api/chat", this::handleChat);
+        server.createContext("/api/download", this::handleDownload);
 
         server.createContext("/", new StaticFileHandler());
 
@@ -84,8 +94,6 @@ public class HttpGateway {
             return;
         }
 
-        registrarClienteHttp(exchange);
-
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("status", "OK");
         response.put("http", true);
@@ -97,8 +105,6 @@ public class HttpGateway {
             sendMethodNotAllowed(exchange, "GET");
             return;
         }
-
-        registrarClienteHttp(exchange);
 
         try {
             List<Documento> documentos = documentoService.listarDocumentos();
@@ -127,8 +133,6 @@ public class HttpGateway {
             return;
         }
 
-        registrarClienteHttp(exchange);
-
         try {
             List<ClienteConectado> clientes = clienteConectadoDAO.listarTodos();
             List<Map<String, Object>> data = new ArrayList<>();
@@ -151,8 +155,6 @@ public class HttpGateway {
             sendMethodNotAllowed(exchange, "GET");
             return;
         }
-
-        registrarClienteHttp(exchange);
 
         try {
             int limit = parseLimit(exchange.getRequestURI().getQuery());
@@ -179,7 +181,7 @@ public class HttpGateway {
             return;
         }
 
-        registrarClienteHttp(exchange);
+        validarSesionHttp(exchange);
 
         String fileName = getFileName(exchange);
         if (fileName == null || fileName.isBlank()) {
@@ -220,15 +222,160 @@ public class HttpGateway {
         }
     }
 
-    private void registrarClienteHttp(HttpExchange exchange) {
+    private void handleConnect(HttpExchange exchange) throws IOException {
+        if (!isMethod(exchange, "POST")) {
+            sendMethodNotAllowed(exchange, "POST");
+            return;
+        }
+
         try {
             String ip = getClientIp(exchange);
-            int puerto = 8080;
+            int puerto = parsePort(exchange);
             String protocolo = "HTTP";
             ClienteConectado cliente = new ClienteConectado(ip, puerto, protocolo);
             clienteConectadoDAO.registrar(cliente);
+            String sessionId = UUID.randomUUID().toString();
+            sesionesHttp.put(sessionId, cliente);
+            logService.logConexion(ip, protocolo);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", "OK");
+            response.put("sessionId", sessionId);
+            response.put("ip", ip);
+            response.put("puerto", puerto);
+            response.put("protocolo", protocolo);
+            sendJson(exchange, 200, response);
         } catch (Exception e) {
-            System.err.println("[HTTP] Error registrando cliente: " + e.getMessage());
+            sendError(exchange, 500, "No se pudo conectar cliente HTTP: " + e.getMessage());
+        }
+    }
+
+    private void handleDisconnect(HttpExchange exchange) throws IOException {
+        if (!isMethod(exchange, "POST")) {
+            sendMethodNotAllowed(exchange, "POST");
+            return;
+        }
+
+        String sessionId = getSessionId(exchange);
+        if (sessionId == null || sessionId.isBlank()) {
+            sendError(exchange, 400, "Debes enviar sessionId");
+            return;
+        }
+
+        ClienteConectado cliente = sesionesHttp.remove(sessionId);
+        if (cliente == null) {
+            sendError(exchange, 404, "Sesion HTTP no encontrada");
+            return;
+        }
+
+        try {
+            clienteConectadoDAO.eliminar(cliente.getIp(), cliente.getPuerto());
+            logService.logDesconexion(cliente.getIp());
+            sendJson(exchange, 200, Mensaje.respuestaOk("mensaje", "Cliente HTTP desconectado").put("sessionId", sessionId));
+        } catch (SQLException e) {
+            sendError(exchange, 500, "No se pudo desconectar cliente HTTP: " + e.getMessage());
+        }
+    }
+
+    private void handleChat(HttpExchange exchange) throws IOException {
+        if (isMethod(exchange, "GET")) {
+            sendJson(exchange, 200, chatHistory);
+            return;
+        }
+        if (!isMethod(exchange, "POST")) {
+            sendMethodNotAllowed(exchange, "GET, POST");
+            return;
+        }
+
+        ClienteConectado cliente = validarSesionHttp(exchange);
+        if (cliente == null) {
+            return;
+        }
+
+        try {
+            Map<String, Object> payload = readJsonBody(exchange);
+            String texto = payload.get("texto") != null ? payload.get("texto").toString().trim() : "";
+            if (texto.isBlank()) {
+                sendError(exchange, 400, "El campo 'texto' es obligatorio");
+                return;
+            }
+
+            Documento doc = documentoService.procesarMensaje(texto, cliente.getIp());
+            logService.logMensajeRecibido(cliente.getIp());
+
+            Map<String, Object> chatMessage = new LinkedHashMap<>();
+            chatMessage.put("remitente", cliente.getIp() + ":" + cliente.getPuerto());
+            chatMessage.put("texto", texto);
+            chatMessage.put("hash", doc.getHashSha256());
+            chatMessage.put("documentoId", doc.getId());
+            chatMessage.put("timestamp", java.time.LocalDateTime.now().toString());
+            chatHistory.add(chatMessage);
+            trimHistory();
+
+            sendJson(exchange, 200, Mensaje.respuestaOk("hash", doc.getHashSha256())
+                    .put("documentoId", doc.getId())
+                    .put("mensaje", "Mensaje enviado")
+                    .put("chat", chatMessage));
+        } catch (Exception e) {
+            sendError(exchange, 500, "No se pudo procesar el chat: " + e.getMessage());
+        }
+    }
+
+    private void handleDownload(HttpExchange exchange) throws IOException {
+        if (!isMethod(exchange, "GET")) {
+            sendMethodNotAllowed(exchange, "GET");
+            return;
+        }
+
+        ClienteConectado cliente = validarSesionHttp(exchange);
+        if (cliente == null) {
+            return;
+        }
+
+        Map<String, String> params = getQueryParams(exchange.getRequestURI().getQuery());
+        long documentoId;
+        try {
+            documentoId = Long.parseLong(params.getOrDefault("documentoId", ""));
+        } catch (NumberFormatException e) {
+            sendError(exchange, 400, "Parametro 'documentoId' invalido");
+            return;
+        }
+
+        String tipo = params.getOrDefault("tipo", "ORIGINAL").toUpperCase();
+        try {
+            Documento doc = documentoService.obtenerDocumento(documentoId);
+            if (doc == null) {
+                sendError(exchange, 404, "Documento no encontrado: " + documentoId);
+                return;
+            }
+
+            if ("HASH".equals(tipo)) {
+                String hash = documentoService.getHash(documentoId);
+                sendJson(exchange, 200, Mensaje.respuestaOk("hash", hash).put("documentoId", documentoId));
+                logService.logDescarga(cliente.getIp(), doc.getNombre(), "HASH");
+                return;
+            }
+
+            try (InputStream in = "ENCRIPTADO".equals(tipo)
+                    ? documentoService.getArchivoEncriptadoStream(documentoId)
+                    : documentoService.getArchivoOriginalStream(documentoId)) {
+                if (in == null) {
+                    sendError(exchange, 404, "No hay datos para el documento solicitado");
+                    return;
+                }
+
+                String fileName = buildDownloadFileName(doc, tipo);
+                byte[] bytes = in.readAllBytes();
+                exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+                exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(bytes);
+                }
+                logService.logDescarga(cliente.getIp(), doc.getNombre(), tipo);
+            }
+        } catch (Exception e) {
+            sendError(exchange, 500, "No se pudo descargar documento: " + e.getMessage());
         }
     }
 
@@ -241,6 +388,39 @@ public class HttpGateway {
             return xForwarded.split(",")[0].trim();
         }
         return "http-client";
+    }
+
+    private ClienteConectado validarSesionHttp(HttpExchange exchange) throws IOException {
+        String sessionId = getSessionId(exchange);
+        if (sessionId == null || sessionId.isBlank()) {
+            sendError(exchange, 401, "Sesion HTTP requerida. Usa /api/connect");
+            return null;
+        }
+        ClienteConectado cliente = sesionesHttp.get(sessionId);
+        if (cliente == null) {
+            sendError(exchange, 401, "Sesion HTTP invalida o expirada");
+            return null;
+        }
+        return cliente;
+    }
+
+    private String getSessionId(HttpExchange exchange) {
+        String fromHeader = exchange.getRequestHeaders().getFirst("X-Session-Id");
+        if (fromHeader != null && !fromHeader.isBlank()) {
+            return fromHeader.trim();
+        }
+        return getQueryParams(exchange.getRequestURI().getQuery()).get("sessionId");
+    }
+
+    private int parsePort(HttpExchange exchange) {
+        String raw = getQueryParams(exchange.getRequestURI().getQuery()).get("port");
+        if (raw == null || raw.isBlank()) return 8080;
+        try {
+            int value = Integer.parseInt(raw);
+            return value > 0 ? value : 8080;
+        } catch (NumberFormatException e) {
+            return 8080;
+        }
     }
 
     private static boolean isMethod(HttpExchange exchange, String expected) {
@@ -307,6 +487,33 @@ public class HttpGateway {
         return Paths.get(input).getFileName().toString();
     }
 
+    private String buildDownloadFileName(Documento doc, String tipo) {
+        String base = sanitizeFileName(doc.getNombre());
+        if ("ENCRIPTADO".equals(tipo)) {
+            return base + ".enc";
+        }
+        return base;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readJsonBody(HttpExchange exchange) throws IOException {
+        byte[] data = exchange.getRequestBody().readAllBytes();
+        if (data.length == 0) {
+            return new HashMap<>();
+        }
+        Map<String, Object> parsed = gson.fromJson(new String(data, StandardCharsets.UTF_8), Map.class);
+        return parsed != null ? parsed : new HashMap<>();
+    }
+
+    private void trimHistory() {
+        synchronized (chatHistory) {
+            int overflow = chatHistory.size() - 300;
+            if (overflow > 0) {
+                chatHistory.subList(0, overflow).clear();
+            }
+        }
+    }
+
     private Map<String, String> getQueryParams(String query) {
         Map<String, String> map = new HashMap<>();
         if (query == null || query.isBlank()) {
@@ -343,8 +550,6 @@ public class HttpGateway {
             } else {
                 resourcePath = "/web" + requestPath;
             }
-
-            registrarClienteHttp(exchange);
 
         try (InputStream in = getClass().getResourceAsStream(resourcePath)) {
                 if (in == null) {

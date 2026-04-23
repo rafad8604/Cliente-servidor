@@ -108,6 +108,7 @@
     }
 
     button:hover { background: var(--primary-2); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
 
     input[type="file"] {
       border: 1px solid var(--border);
@@ -125,6 +126,31 @@
 
     .status.ok { color: var(--ok); }
     .status.error { color: var(--error); }
+
+    .chat-box {
+      height: 240px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #f9fafb;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 0.87rem;
+      white-space: pre-wrap;
+    }
+
+    .chat-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .chat-actions input[type="text"] {
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+    }
 
     table {
       width: 100%;
@@ -157,10 +183,38 @@
   <div class="container">
     <section class="hero">
       <h1>Panel Web HTTP</h1>
-      <span class="badge">Conexion fija: HTTP</span>
+      <span id="connectionBadge" class="badge">Desconectado</span>
     </section>
 
     <div class="grid">
+      <section class="card w-12">
+        <div class="card-header">
+          <h2>Conexion HTTP</h2>
+          <div class="actions">
+            <input id="httpPort" type="number" min="1" value="8080" style="width: 110px;">
+            <button id="connectBtn" type="button">Conectar</button>
+            <button id="disconnectBtn" type="button" disabled>Desconectar</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="connectionStatus" class="status">No hay sesion activa.</div>
+        </div>
+      </section>
+
+      <section class="card w-12">
+        <div class="card-header">
+          <h2>Chat HTTP</h2>
+          <button id="refreshChatBtn" type="button">Refrescar</button>
+        </div>
+        <div class="card-body">
+          <div id="chatBox" class="chat-box"></div>
+          <div class="chat-actions">
+            <input id="chatInput" type="text" placeholder="Escribe un mensaje...">
+            <button id="sendChatBtn" type="button" disabled>Enviar</button>
+          </div>
+        </div>
+      </section>
+
       <section class="card w-12">
         <div class="card-header">
           <h2>Subir archivo al servidor</h2>
@@ -190,6 +244,7 @@
                 <th>Hash</th>
                 <th>IP</th>
                 <th>Fecha</th>
+                <th>Descargas</th>
               </tr>
             </thead>
             <tbody id="docsBody"></tbody>
@@ -243,6 +298,15 @@
     const fileInput = document.getElementById('fileInput');
     const uploadBtn = document.getElementById('uploadBtn');
     const uploadStatus = document.getElementById('uploadStatus');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const connectionBadge = document.getElementById('connectionBadge');
+    const httpPort = document.getElementById('httpPort');
+    const chatBox = document.getElementById('chatBox');
+    const chatInput = document.getElementById('chatInput');
+    const sendChatBtn = document.getElementById('sendChatBtn');
+    const refreshChatBtn = document.getElementById('refreshChatBtn');
 
     const docsBody = document.getElementById('docsBody');
     const clientsBody = document.getElementById('clientsBody');
@@ -251,6 +315,27 @@
     const refreshDocsBtn = document.getElementById('refreshDocsBtn');
     const refreshClientsBtn = document.getElementById('refreshClientsBtn');
     const refreshLogsBtn = document.getElementById('refreshLogsBtn');
+    let sessionId = '';
+
+    function isConnected() {
+      return Boolean(sessionId);
+    }
+
+    function updateConnectionUi() {
+      connectBtn.disabled = isConnected();
+      disconnectBtn.disabled = !isConnected();
+      sendChatBtn.disabled = !isConnected();
+      uploadBtn.disabled = !isConnected();
+      if (isConnected()) {
+        connectionBadge.textContent = 'Conectado HTTP';
+        connectionStatus.textContent = 'Sesion activa: ' + sessionId;
+        connectionStatus.className = 'status ok';
+      } else {
+        connectionBadge.textContent = 'Desconectado';
+        connectionStatus.textContent = 'No hay sesion activa.';
+        connectionStatus.className = 'status';
+      }
+    }
 
     function formatSize(bytes) {
       if (bytes == null || isNaN(bytes)) return '-';
@@ -262,6 +347,10 @@
     function setStatus(text, ok = false) {
       uploadStatus.textContent = text;
       uploadStatus.className = 'status ' + (ok ? 'ok' : 'error');
+    }
+
+    function getAuthHeaders() {
+      return sessionId ? { 'X-Session-Id': sessionId } : {};
     }
 
     function renderRows(tbody, rows, renderer) {
@@ -284,10 +373,16 @@
     }
 
     async function fetchJson(url) {
-      const response = await fetch(url);
+      const response = await fetch(url, { headers: getAuthHeaders() });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error('HTTP ' + response.status + ': ' + text);
+        let detail = '';
+        try {
+          const body = await response.json();
+          detail = body.detalle || JSON.stringify(body);
+        } catch (_e) {
+          detail = await response.text();
+        }
+        throw new Error('HTTP ' + response.status + ': ' + detail);
       }
       return response.json();
     }
@@ -303,6 +398,11 @@
           <td>${d.hash ?? ''}</td>
           <td>${d.ip ?? ''}</td>
           <td>${d.fecha ?? ''}</td>
+          <td>
+            <button type="button" onclick="descargarDocumento(${d.id}, 'ORIGINAL')">Original</button>
+            <button type="button" onclick="descargarDocumento(${d.id}, 'HASH')">Hash</button>
+            <button type="button" onclick="descargarDocumento(${d.id}, 'ENCRIPTADO')">Encriptado</button>
+          </td>
         `;
       });
     }
@@ -332,6 +432,10 @@
     }
 
     async function uploadFile() {
+      if (!isConnected()) {
+        setStatus('Debes conectarte antes de subir.');
+        return;
+      }
       const file = fileInput.files[0];
       if (!file) {
         setStatus('Debes seleccionar un archivo antes de subirlo.');
@@ -347,7 +451,8 @@
           method: 'POST',
           headers: {
             'Content-Type': 'application/octet-stream',
-            'X-File-Name': encodeURIComponent(file.name)
+            'X-File-Name': encodeURIComponent(file.name),
+            ...getAuthHeaders()
           },
           body: file
         });
@@ -365,16 +470,154 @@
         setStatus('Error al subir archivo: ' + error.message);
       } finally {
         uploadBtn.disabled = false;
+        updateConnectionUi();
       }
     }
 
+    async function connectHttp() {
+      connectBtn.disabled = true;
+      try {
+        const port = Number(httpPort.value) || 8080;
+        const response = await fetch('/api/connect?port=' + port, { method: 'POST' });
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.detalle || 'No se pudo conectar');
+        }
+        sessionId = body.sessionId || '';
+        updateConnectionUi();
+        setStatus('Conectado correctamente.', true);
+        await Promise.all([refreshClientes(), refreshDocumentos(), refreshLogs(), refreshChat()]);
+      } catch (error) {
+        connectionStatus.textContent = 'Error de conexion: ' + error.message;
+        connectionStatus.className = 'status error';
+      } finally {
+        updateConnectionUi();
+      }
+    }
+
+    async function disconnectHttp() {
+      if (!isConnected()) return;
+      try {
+        const response = await fetch('/api/disconnect', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        if (!response.ok) {
+          const body = await response.json();
+          throw new Error(body.detalle || 'No se pudo desconectar');
+        }
+      } catch (error) {
+        connectionStatus.textContent = 'Error al desconectar: ' + error.message;
+        connectionStatus.className = 'status error';
+      } finally {
+        sessionId = '';
+        updateConnectionUi();
+        await Promise.all([refreshClientes(), refreshLogs()]);
+      }
+    }
+
+    async function refreshChat() {
+      const messages = await fetchJson('/api/chat');
+      if (!messages || messages.length === 0) {
+        chatBox.textContent = 'Sin mensajes.';
+        return;
+      }
+      const lines = messages.map((m) => `[${m.timestamp ?? ''}] [${m.remitente ?? 'anon'}] ${m.texto ?? ''}\n  -> Hash: ${m.hash ?? '-'}`);
+      chatBox.textContent = lines.join('\n');
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    async function sendChat() {
+      if (!isConnected()) {
+        connectionStatus.textContent = 'Debes conectar primero.';
+        connectionStatus.className = 'status error';
+        return;
+      }
+      const texto = chatInput.value.trim();
+      if (!texto) return;
+      sendChatBtn.disabled = true;
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ texto })
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.detalle || 'No se pudo enviar el mensaje');
+        }
+        chatInput.value = '';
+        await Promise.all([refreshChat(), refreshDocumentos(), refreshLogs()]);
+      } catch (error) {
+        connectionStatus.textContent = 'Error en chat: ' + error.message;
+        connectionStatus.className = 'status error';
+      } finally {
+        sendChatBtn.disabled = false;
+        updateConnectionUi();
+      }
+    }
+
+    async function descargarDocumento(documentoId, tipo) {
+      if (!isConnected()) {
+        setStatus('Debes conectarte para descargar.');
+        return;
+      }
+
+      try {
+        const url = `/api/download?documentoId=${documentoId}&tipo=${encodeURIComponent(tipo)}`;
+        const response = await fetch(url, { headers: getAuthHeaders() });
+        if (!response.ok) {
+          const body = await response.json();
+          throw new Error(body.detalle || 'No se pudo descargar');
+        }
+
+        if (tipo === 'HASH') {
+          const body = await response.json();
+          await navigator.clipboard.writeText(body.hash || '');
+          setStatus('Hash copiado: ' + (body.hash || '-'), true);
+          return;
+        }
+
+        const blob = await response.blob();
+        const contentDisposition = response.headers.get('Content-Disposition') || '';
+        const match = contentDisposition.match(/filename="(.+)"/);
+        const filename = match ? match[1] : `documento_${documentoId}`;
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        URL.revokeObjectURL(link.href);
+        link.remove();
+        setStatus('Descarga completada: ' + filename, true);
+        await refreshLogs();
+      } catch (error) {
+        setStatus('Error en descarga: ' + error.message);
+      }
+    }
+    window.descargarDocumento = descargarDocumento;
+
     uploadBtn.addEventListener('click', uploadFile);
+    connectBtn.addEventListener('click', connectHttp);
+    disconnectBtn.addEventListener('click', disconnectHttp);
+    sendChatBtn.addEventListener('click', sendChat);
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendChat();
+      }
+    });
+    refreshChatBtn.addEventListener('click', () => refreshChat().catch((e) => setStatus(e.message)));
     refreshDocsBtn.addEventListener('click', () => refreshDocumentos().catch((e) => setStatus(e.message)));
     refreshClientsBtn.addEventListener('click', () => refreshClientes().catch((e) => setStatus(e.message)));
     refreshLogsBtn.addEventListener('click', () => refreshLogs().catch((e) => setStatus(e.message)));
 
-    Promise.all([refreshDocumentos(), refreshClientes(), refreshLogs()])
-      .then(() => setStatus('Panel HTTP listo.', true))
+    updateConnectionUi();
+    Promise.all([refreshDocumentos(), refreshClientes(), refreshLogs(), refreshChat()])
+      .then(() => setStatus('Panel HTTP listo. Conectate para operar.', true))
       .catch((error) => setStatus('No se pudo cargar el panel: ' + error.message));
   </script>
 </body>

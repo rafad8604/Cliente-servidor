@@ -38,10 +38,10 @@ Proyecto Java multi-módulo para mensajería y transferencia de archivos con sop
 - Ideal para: baja latencia, tolerancia a pérdida de paquetes
 
 ### HTTP (Puerto 8080)
-- Stateless (sin sesión persistente)
+- Con sesión HTTP explícita (`/api/connect` y `/api/disconnect`)
 - Acceso: navegador web → `http://localhost:8080`
-- Registra cliente automáticamente en cada request por IP
-- Ideal para: acceso web, monitoreo, sin dependencia de cliente específico
+- Registra cliente al conectarse y lo elimina al desconectarse
+- Ideal para: acceso web, monitoreo y operaciones desde navegador con estado de sesión
 
 ## Requisitos
 
@@ -97,14 +97,28 @@ java -cp "server/target/server-1.0-SNAPSHOT.jar:server/target/libs/*" com.app.se
 ### Panel Web HTTP:
 
 - URL: `http://localhost:8080`
-- Acceso desde navegador sin configurar protocolo
-- Registra clientes automáticamente por IP
+- Conexión/desconexión HTTP desde el propio panel
 - Funcionalidades:
+  - Chat HTTP (envío y visualización de historial)
   - Subir archivos al servidor
   - Ver documentos guardados en BD
+  - Descargar documentos (`Original`, `Hash`, `Encriptado`)
   - Ver clientes conectados (TCP, UDP, HTTP)
   - Ver logs recientes del servidor
   - Interfaz responsive dark theme
+
+### Endpoints HTTP principales
+
+- `GET /api/health` - estado del gateway
+- `POST /api/connect?port=8080` - abre sesión HTTP y registra cliente
+- `POST /api/disconnect` - cierra sesión HTTP (`X-Session-Id`)
+- `GET /api/documentos` - lista documentos
+- `GET /api/clientes` - lista clientes conectados
+- `GET /api/logs?limit=50` - últimos logs
+- `POST /api/chat` - envía mensaje (`X-Session-Id`, body JSON `{ "texto": "..." }`)
+- `GET /api/chat` - historial de chat HTTP
+- `POST /api/upload?filename=archivo.ext` - sube archivo (`X-Session-Id`)
+- `GET /api/download?documentoId=1&tipo=ORIGINAL|HASH|ENCRIPTADO` - descarga por tipo (`X-Session-Id`)
 
 ### Comandos de consola del servidor:
 
@@ -188,6 +202,6 @@ Formato de archivo:
 - Asegúrate de mantener libres los puertos: `9000` (TCP), `9001` (UDP), `3306` (MySQL), `8080` (HTTP).
 - El proyecto está organizado como multi-módulo Maven (`shared`, `server`, `client`).
 - **UDP**: El cliente calcula automáticamente el puerto como `puerto_tcp + 1` (9000 → 9001).
-- **HTTP**: Registra clientes por IP en cada request. Útil para monitoreo sin cliente persistente.
+- **HTTP**: Requiere sesión para chat, subida y descarga (header `X-Session-Id`).
 - **Cifrado**: Todos los archivos se cifran con AES-256 y se almacenan como chunks en BD.
 - **Testing**: Ejecuta `mvn test` para validar funcionalidad en los 3 protocolos.

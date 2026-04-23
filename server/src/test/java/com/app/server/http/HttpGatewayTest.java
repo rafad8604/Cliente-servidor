@@ -51,7 +51,7 @@ class HttpGatewayTest {
 
     @Test
     void healthEndpointResponde() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/health");
+        URL url = createUrl("/api/health");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -66,7 +66,7 @@ class HttpGatewayTest {
 
     @Test
     void healthEndpointRetornaJson() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/health");
+        URL url = createUrl("/api/health");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -74,14 +74,45 @@ class HttpGatewayTest {
         JsonObject json = JsonParser.parseString(response).getAsJsonObject();
         
         assertTrue(json.has("status"));
-        assertTrue(json.has("timestamp"));
+        assertTrue(json.has("http"));
         
         conn.disconnect();
     }
 
     @Test
+    void connectYDisconnectFuncionanConSesion() throws IOException {
+        HttpURLConnection connectConn = openJsonConnection("POST", "/api/connect?port=8080");
+        assertEquals(200, connectConn.getResponseCode());
+        JsonObject connectJson = JsonParser.parseString(readResponse(connectConn)).getAsJsonObject();
+        assertTrue(connectJson.has("sessionId"));
+        String sessionId = connectJson.get("sessionId").getAsString();
+        assertFalse(sessionId.isBlank());
+        connectConn.disconnect();
+
+        HttpURLConnection disconnectConn = openJsonConnection("POST", "/api/disconnect");
+        disconnectConn.setRequestProperty("X-Session-Id", sessionId);
+        assertEquals(200, disconnectConn.getResponseCode());
+        JsonObject disconnectJson = JsonParser.parseString(readResponse(disconnectConn)).getAsJsonObject();
+        assertEquals("OK", disconnectJson.getAsJsonObject("datos").get("status").getAsString());
+        disconnectConn.disconnect();
+    }
+
+    @Test
+    void chatRequiereSesion() throws IOException {
+        HttpURLConnection conn = openJsonConnection("POST", "/api/chat");
+        conn.setDoOutput(true);
+        conn.getOutputStream().write("{\"texto\":\"hola\"}".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(401, conn.getResponseCode());
+
+        String response = readErrorResponse(conn);
+        assertTrue(response.contains("Sesion HTTP requerida"));
+        conn.disconnect();
+    }
+
+    @Test
     void documentosEndpointResponde() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/documentos");
+        URL url = createUrl("/api/documentos");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -97,7 +128,7 @@ class HttpGatewayTest {
 
     @Test
     void clientesEndpointResponde() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/clientes");
+        URL url = createUrl("/api/clientes");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -111,7 +142,7 @@ class HttpGatewayTest {
 
     @Test
     void logsEndpointResponde() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/logs");
+        URL url = createUrl("/api/logs");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -125,7 +156,7 @@ class HttpGatewayTest {
 
     @Test
     void logsEndpointConLimitQuery() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/logs?limit=5");
+        URL url = createUrl("/api/logs?limit=5");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -139,7 +170,7 @@ class HttpGatewayTest {
 
     @Test
     void staticFileHandlerResponde() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/");
+        URL url = createUrl("/");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -152,7 +183,7 @@ class HttpGatewayTest {
 
     @Test
     void uploadEndpointRechazaSinContenido() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/upload");
+        URL url = createUrl("/api/upload");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setDoOutput(false);
@@ -166,7 +197,7 @@ class HttpGatewayTest {
 
     @Test
     void contentTypeHeaders() throws IOException {
-        URL url = new URL("http://localhost:" + testPort + "/api/health");
+        URL url = createUrl("/api/health");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         
@@ -201,5 +232,27 @@ class HttpGatewayTest {
             }
         }
         return response.toString();
+    }
+
+    private String readErrorResponse(HttpURLConnection conn) throws IOException {
+        StringBuilder response = new StringBuilder();
+        try (Scanner scanner = new Scanner(conn.getErrorStream(), StandardCharsets.UTF_8)) {
+            while (scanner.hasNextLine()) {
+                response.append(scanner.nextLine());
+            }
+        }
+        return response.toString();
+    }
+
+    private HttpURLConnection openJsonConnection(String method, String path) throws IOException {
+        URL url = createUrl(path);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod(method);
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        return conn;
+    }
+
+    private URL createUrl(String path) throws IOException {
+        return java.net.URI.create("http://localhost:" + testPort + path).toURL();
     }
 }
