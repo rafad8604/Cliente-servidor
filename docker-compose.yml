@@ -11,7 +11,7 @@ services:
       MYSQL_USER: mensajeria_user
       MYSQL_PASSWORD: mensajeria_pass
     ports:
-      - "3306:3306"
+      - "33306:3306"
     volumes:
       - ./server/src/main/resources/init.sql:/docker-entrypoint-initdb.d/init.sql
       - mysql_data:/var/lib/mysql

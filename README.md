@@ -62,7 +62,7 @@ Credenciales por defecto:
 - Base de datos: `mensajeria_db`
 - Usuario: `mensajeria_user`
 - Password: `mensajeria_pass`
-- Puerto: `3306`
+- Puerto: `33306`
 
 ## Compilar y empaquetar (con Maven)
 

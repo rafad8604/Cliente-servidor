@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.app.client.net.NetworkClientUdpTest
 -------------------------------------------------------------------------------
-Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.058 s -- in com.app.client.net.NetworkClientUdpTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.063 s -- in com.app.client.net.NetworkClientUdpTest

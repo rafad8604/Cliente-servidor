@@ -12,7 +12,7 @@ import java.util.concurrent.BlockingQueue;
  */
 public class DatabaseConnection {
 
-    private static final String URL = "jdbc:mysql://localhost:3306/mensajeria_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
+    private static final String URL = "jdbc:mysql://localhost:33306/mensajeria_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
     private static final String USER = "mensajeria_user";
     private static final String PASSWORD = "mensajeria_pass";
     private static final int POOL_SIZE = 10;
