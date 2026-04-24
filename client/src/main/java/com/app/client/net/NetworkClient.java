@@ -33,6 +33,7 @@ public class NetworkClient implements Closeable {
     // UDP
     private DatagramSocket udpSocket;
     private InetAddress udpAddress;
+    private int udpPort = 9001; // Puerto por defecto para UDP
     private static final int MAX_DATAGRAM_SIZE = 60000;
     private static final int HEADER_SIZE = 9;
     private static final int DATA_PAYLOAD_SIZE = MAX_DATAGRAM_SIZE - HEADER_SIZE;
@@ -85,7 +86,29 @@ public class NetworkClient implements Closeable {
         udpSocket = new DatagramSocket();
         udpSocket.setSoTimeout(10000);
         udpAddress = InetAddress.getByName(host);
+        
+        // UDP usa puerto = puerto_tcp + 1 (por convención: 9000 TCP -> 9001 UDP)
+        this.udpPort = (port == 9000) ? 9001 : (port + 1);
+        System.out.println("[UDP] Conectando a " + host + ":" + udpPort);
         connected = true;
+
+        // Enviar paquete de handshake al servidor para registrarse
+        Mensaje handshake = new Mensaje(Comando.LISTAR_CLIENTES);
+        int sessionId = random.nextInt(Integer.MAX_VALUE);
+        try {
+            byte[] payload = handshake.toJson().getBytes(StandardCharsets.UTF_8);
+            byte[] packet = new byte[HEADER_SIZE + payload.length];
+            packet[0] = 0; // tipo control
+            ByteBuffer.wrap(packet, 1, 4).putInt(sessionId);
+            ByteBuffer.wrap(packet, 5, 4).putInt(0);
+            System.arraycopy(payload, 0, packet, HEADER_SIZE, payload.length);
+            DatagramPacket dp = new DatagramPacket(packet, packet.length, udpAddress, udpPort);
+            udpSocket.send(dp);
+            
+            recibirControlUdp(sessionId);
+        } catch (Exception e) {
+            System.err.println("[UDP] Advertencia en handshake UDP: " + e.getMessage());
+        }
 
         return new Mensaje(Comando.SESION_INFO).put("status", "CONECTADO").put("protocolo", "UDP");
     }
@@ -414,7 +437,7 @@ public class NetworkClient implements Closeable {
         ByteBuffer.wrap(packet, 5, 4).putInt(seqNum);
         System.arraycopy(payload, 0, packet, HEADER_SIZE, payload.length);
 
-        DatagramPacket dp = new DatagramPacket(packet, packet.length, udpAddress, port);
+        DatagramPacket dp = new DatagramPacket(packet, packet.length, udpAddress, udpPort);
         udpSocket.send(dp);
     }
 

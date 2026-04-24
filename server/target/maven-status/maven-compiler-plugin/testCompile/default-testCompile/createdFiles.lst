@@ -1,2 +1,7 @@
-com\app\server\models\ServerModelsTest.class
-com\app\server\net\ClientPoolTest.class
+com/app/server/http/HttpGatewayTest.class
+com/app/server/net/CommandDispatcherTest.class
+com/app/server/dao/ClienteConectadoDAOTest.class
+com/app/server/models/ServerModelsTest.class
+com/app/server/service/LogServiceTest.class
+com/app/server/service/DocumentoServiceTest.class
+com/app/server/net/ClientPoolTest.class

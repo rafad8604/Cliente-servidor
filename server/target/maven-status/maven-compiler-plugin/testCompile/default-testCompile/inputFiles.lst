@@ -1,2 +1,7 @@
-D:\Repos\ClienteServidor\server\src\test\java\com\app\server\models\ServerModelsTest.java
-D:\Repos\ClienteServidor\server\src\test\java\com\app\server\net\ClientPoolTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/test/java/com/app/server/dao/ClienteConectadoDAOTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/test/java/com/app/server/http/HttpGatewayTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/test/java/com/app/server/models/ServerModelsTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/test/java/com/app/server/net/ClientPoolTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/test/java/com/app/server/net/CommandDispatcherTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/test/java/com/app/server/service/DocumentoServiceTest.java
+/Users/luisperez/Documents/Proyectos/Personales/Software2/Cliente-servidor/server/src/test/java/com/app/server/service/LogServiceTest.java
