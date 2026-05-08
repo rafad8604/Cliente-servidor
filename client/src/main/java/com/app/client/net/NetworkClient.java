@@ -33,7 +33,7 @@ public class NetworkClient implements Closeable {
     // UDP
     private DatagramSocket udpSocket;
     private InetAddress udpAddress;
-    private int udpPort = 9001; // Puerto por defecto para UDP
+    private int udpPort; // Puerto UDP indicado por el usuario
     private static final int MAX_DATAGRAM_SIZE = 60000;
     private static final int HEADER_SIZE = 9;
     private static final int DATA_PAYLOAD_SIZE = MAX_DATAGRAM_SIZE - HEADER_SIZE;
@@ -87,8 +87,8 @@ public class NetworkClient implements Closeable {
         udpSocket.setSoTimeout(10000);
         udpAddress = InetAddress.getByName(host);
         
-        // UDP usa puerto = puerto_tcp + 1 (por convención: 9000 TCP -> 9001 UDP)
-        this.udpPort = (port == 9000) ? 9001 : (port + 1);
+        // UDP usa exactamente el puerto configurado por el usuario.
+        this.udpPort = port;
         System.out.println("[UDP] Conectando a " + host + ":" + udpPort);
         connected = true;
 

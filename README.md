@@ -34,7 +34,7 @@ Proyecto Java multi-módulo para mensajería y transferencia de archivos con sop
 - Datagrama sin conexión
 - Cliente: Selecciona en GUI → "UDP"
 - Registra cliente automáticamente al enviar primer comando
-- Nota: cliente calcula puerto como `9000 + 1 = 9001`
+- Nota: UDP usa exactamente el puerto indicado en la GUI. Por defecto usa `9001`.
 - Ideal para: baja latencia, tolerancia a pérdida de paquetes
 
 ### HTTP (Puerto 8080)
@@ -161,7 +161,7 @@ mvn -q test
 
 **client/**
 - `NetworkClientTcpTest` - Envío y descarga de archivos vía TCP
-- `NetworkClientUdpTest` (10 tests) - Conexión UDP, puerto correcto (9001), handshake
+- `NetworkClientUdpTest` - Conexión UDP, puerto configurado (9001), handshake
 - `HistorialDocumentoTest` - Historial local H2
 
 ## Flujo sin Maven (usando `target` versionado)
@@ -201,7 +201,7 @@ Formato de archivo:
 - Si MySQL no está disponible al arrancar el servidor, el inicio fallará.
 - Asegúrate de mantener libres los puertos: `9000` (TCP), `9001` (UDP), `3306` (MySQL), `8080` (HTTP).
 - El proyecto está organizado como multi-módulo Maven (`shared`, `server`, `client`).
-- **UDP**: El cliente calcula automáticamente el puerto como `puerto_tcp + 1` (9000 → 9001).
+- **UDP**: El cliente usa exactamente el puerto configurado. En el servidor por defecto es `9001`.
 - **HTTP**: Requiere sesión para chat, subida y descarga (header `X-Session-Id`).
 - **Cifrado**: Todos los archivos se cifran con AES-256 y se almacenan como chunks en BD.
 - **Testing**: Ejecuta `mvn test` para validar funcionalidad en los 3 protocolos.

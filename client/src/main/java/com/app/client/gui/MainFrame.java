@@ -107,6 +107,8 @@ public class MainFrame extends JFrame {
         rbUdp.setBackground(BG_PANEL);
         rbUdp.setFont(FONT_NORMAL);
         rbUdp.setFocusPainted(false);
+        rbUdp.addActionListener(e -> ajustarPuertoPorProtocolo());
+        rbTcp.addActionListener(e -> ajustarPuertoPorProtocolo());
 
         ButtonGroup bg = new ButtonGroup();
         bg.add(rbTcp);
@@ -388,6 +390,15 @@ public class MainFrame extends JFrame {
             desconectar();
         } else {
             conectar();
+        }
+    }
+
+    private void ajustarPuertoPorProtocolo() {
+        String port = txtPort.getText().trim();
+        if (rbUdp.isSelected() && "9000".equals(port)) {
+            txtPort.setText("9001");
+        } else if (rbTcp.isSelected() && "9001".equals(port)) {
+            txtPort.setText("9000");
         }
     }
 
