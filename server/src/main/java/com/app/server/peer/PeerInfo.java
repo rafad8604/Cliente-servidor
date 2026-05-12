@@ -8,10 +8,12 @@ import java.util.Objects;
  *
  * Inmutable salvo por {@code ultimaSenal}, que se actualiza con cada heartbeat
  * recibido. Identidad por {@code id} (UUID generado al iniciar cada servidor).
+ * El {@code nombre} es un alias legible (hostname o asignado via {@code --nombre}).
  */
 public final class PeerInfo {
 
     private final String id;
+    private final String nombre;
     private final String host;
     private final int puertoPeer;
     private final int puertoTcp;
@@ -19,7 +21,12 @@ public final class PeerInfo {
     private volatile Instant ultimaSenal;
 
     public PeerInfo(String id, String host, int puertoPeer, int puertoTcp, int puertoUdp) {
+        this(id, null, host, puertoPeer, puertoTcp, puertoUdp);
+    }
+
+    public PeerInfo(String id, String nombre, String host, int puertoPeer, int puertoTcp, int puertoUdp) {
         this.id = Objects.requireNonNull(id, "id");
+        this.nombre = (nombre == null || nombre.isBlank()) ? host : nombre;
         this.host = Objects.requireNonNull(host, "host");
         this.puertoPeer = puertoPeer;
         this.puertoTcp = puertoTcp;
@@ -28,6 +35,7 @@ public final class PeerInfo {
     }
 
     public String getId() { return id; }
+    public String getNombre() { return nombre; }
     public String getHost() { return host; }
     public int getPuertoPeer() { return puertoPeer; }
     public int getPuertoTcp() { return puertoTcp; }
@@ -54,6 +62,6 @@ public final class PeerInfo {
 
     @Override
     public String toString() {
-        return "Peer[" + id.substring(0, Math.min(8, id.length())) + " " + host + ":" + puertoPeer + "]";
+        return "Peer[" + nombre + " " + host + ":" + puertoPeer + "]";
     }
 }

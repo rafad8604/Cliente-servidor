@@ -144,10 +144,11 @@ public class PeerDiscoveryService {
                 case PEER_HELLO: {
                     String host = msg.getString("host");
                     if (host == null) host = origen.getHostAddress();
+                    String nombre = msg.getString("nombre");
                     int puertoPeer = msg.getInt("puertoPeer");
                     int puertoTcp = msg.getInt("puertoTcp");
                     int puertoUdp = msg.getInt("puertoUdp");
-                    PeerInfo info = new PeerInfo(peerId, host, puertoPeer, puertoTcp, puertoUdp);
+                    PeerInfo info = new PeerInfo(peerId, nombre, host, puertoPeer, puertoTcp, puertoUdp);
                     PeerInfo aplicado = registry.aplicarHello(info);
                     if (aplicado != null && eventBus != null) {
                         eventBus.publish(ServerEventType.PEER_HELLO_RECIBIDO, "discovery",
@@ -185,6 +186,7 @@ public class PeerDiscoveryService {
     private byte[] buildHelloPayload(Comando comando) {
         Mensaje msg = new Mensaje(comando)
                 .put("id", selfInfo.getId())
+                .put("nombre", selfInfo.getNombre())
                 .put("host", selfInfo.getHost())
                 .put("puertoPeer", selfInfo.getPuertoPeer())
                 .put("puertoTcp", selfInfo.getPuertoTcp())

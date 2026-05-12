@@ -18,6 +18,18 @@ class PeerInfoTest {
     }
 
     @Test
+    void nombreCustomSeAlmacenaYHostEsFallback() {
+        PeerInfo conNombre = new PeerInfo("id-x", "PC-SalaA", "10.0.0.5", 9100, 9000, 9001);
+        assertEquals("PC-SalaA", conNombre.getNombre());
+
+        PeerInfo sinNombre = new PeerInfo("id-y", null, "10.0.0.6", 9100, 9000, 9001);
+        assertEquals("10.0.0.6", sinNombre.getNombre());
+
+        PeerInfo nombreBlank = new PeerInfo("id-z", "  ", "10.0.0.7", 9100, 9000, 9001);
+        assertEquals("10.0.0.7", nombreBlank.getNombre());
+    }
+
+    @Test
     void marcarVistoActualizaTimestamp() throws InterruptedException {
         PeerInfo info = new PeerInfo("id-1", "1.1.1.1", 1, 2, 3);
         var t1 = info.getUltimaSenal();

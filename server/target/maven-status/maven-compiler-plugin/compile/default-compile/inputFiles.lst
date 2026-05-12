@@ -4,6 +4,7 @@
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/dao/DocumentoDAO.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/dao/LogDAO.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/events/ConsoleServerEventListener.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/events/InMemoryEventBuffer.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/events/ServerEvent.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/events/ServerEventBus.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/events/ServerEventListener.java

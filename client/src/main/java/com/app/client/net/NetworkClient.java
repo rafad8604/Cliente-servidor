@@ -206,6 +206,14 @@ public class NetworkClient implements Closeable {
         return enviarComandoSimple(new Mensaje(Comando.DESCARGAR_HASH).put("documentoId", documentoId));
     }
 
+    public Mensaje obtenerEventos(int limit) throws IOException {
+        return enviarComandoSimple(new Mensaje(Comando.OBTENER_EVENTOS).put("limit", limit));
+    }
+
+    public Mensaje obtenerLogs(int limit) throws IOException {
+        return enviarComandoSimple(new Mensaje(Comando.OBTENER_LOGS).put("limit", limit));
+    }
+
     private Mensaje enviarComandoSimple(Mensaje msg) throws IOException {
         if (protocolo == Protocolo.TCP) {
             synchronized (tcpRequestLock) {
@@ -219,8 +227,18 @@ public class NetworkClient implements Closeable {
     }
 
     public void descargarArchivo(long documentoId, File destino, Consumer<Long> onProgress) throws Exception {
+        descargarArchivo(documentoId, null, destino, onProgress);
+    }
+
+    /**
+     * Descarga indicando opcionalmente el {@code servidor} (peerId) origen.
+     * Si no es {@code null} ni "local", el servidor al que estoy conectado
+     * actuara como proxy hacia ese peer.
+     */
+    public void descargarArchivo(long documentoId, String servidor, File destino, Consumer<Long> onProgress)
+            throws Exception {
         if (protocolo == Protocolo.TCP) {
-            descargarArchivoTcp(documentoId, destino, onProgress, Comando.DESCARGAR_ARCHIVO);
+            descargarArchivoTcp(documentoId, servidor, destino, onProgress, Comando.DESCARGAR_ARCHIVO);
         } else {
             descargarArchivoUdp(documentoId, destino, onProgress, Comando.DESCARGAR_ARCHIVO);
         }
@@ -271,10 +289,12 @@ public class NetworkClient implements Closeable {
         return lineBuffer.toString(StandardCharsets.UTF_8);
     }
 
-    private void descargarArchivoTcp(long documentoId, File destino, Consumer<Long> onProgress, Comando comando)
+    private void descargarArchivoTcp(long documentoId, String servidor,
+                                     File destino, Consumer<Long> onProgress, Comando comando)
             throws Exception {
         synchronized (tcpRequestLock) {
             Mensaje msg = new Mensaje(comando).put("documentoId", documentoId);
+            if (servidor != null && !servidor.isBlank()) msg.put("servidor", servidor);
             enviarLineaTcp(msg.toJson());
 
             Mensaje header = esperarRespuestaTcp();

@@ -1,10 +1,14 @@
 package com.app.server.net;
 
 import com.app.server.dao.ClienteConectadoDAO;
+import com.app.server.dao.LogDAO;
+import com.app.server.events.InMemoryEventBuffer;
+import com.app.server.events.ServerEvent;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
+import com.app.server.models.Log;
 import com.app.server.peer.PeerCatalog;
 import com.app.server.peer.PeerInfo;
 import com.app.server.peer.PeerRegistry;
@@ -39,12 +43,14 @@ public class CommandDispatcher {
     private final ServerEventBus eventBus;
     private final PeerRegistry peerRegistry;
     private final PeerCatalog peerCatalog;
+    private final InMemoryEventBuffer eventBuffer;
+    private final LogDAO logDAO;
 
     public CommandDispatcher(DocumentoService documentoService,
                              LogService logService,
                              ClienteConectadoDAO clienteDAO,
                              ServerEventBus eventBus) {
-        this(documentoService, logService, clienteDAO, eventBus, null, null);
+        this(documentoService, logService, clienteDAO, eventBus, null, null, null, null);
     }
 
     public CommandDispatcher(DocumentoService documentoService,
@@ -53,12 +59,25 @@ public class CommandDispatcher {
                              ServerEventBus eventBus,
                              PeerRegistry peerRegistry,
                              PeerCatalog peerCatalog) {
+        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, null, null);
+    }
+
+    public CommandDispatcher(DocumentoService documentoService,
+                             LogService logService,
+                             ClienteConectadoDAO clienteDAO,
+                             ServerEventBus eventBus,
+                             PeerRegistry peerRegistry,
+                             PeerCatalog peerCatalog,
+                             InMemoryEventBuffer eventBuffer,
+                             LogDAO logDAO) {
         this.documentoService = documentoService;
         this.logService = logService;
         this.clienteDAO = clienteDAO;
         this.eventBus = eventBus;
         this.peerRegistry = peerRegistry;
         this.peerCatalog = peerCatalog;
+        this.eventBuffer = eventBuffer;
+        this.logDAO = logDAO;
     }
 
     /**
@@ -126,6 +145,7 @@ public class CommandDispatcher {
                     for (PeerInfo p : peerRegistry.listarOnline()) {
                         Map<String, Object> row = new LinkedHashMap<>();
                         row.put("id", p.getId());
+                        row.put("nombre", p.getNombre());
                         row.put("host", p.getHost());
                         row.put("puertoPeer", p.getPuertoPeer());
                         row.put("puertoTcp", p.getPuertoTcp());
@@ -135,6 +155,43 @@ public class CommandDispatcher {
                     }
                 }
                 channel.sendMensaje(Mensaje.respuestaOk("servidores", GSON.toJson(rows))
+                        .put("total", rows.size()));
+                return true;
+            }
+            case OBTENER_EVENTOS: {
+                int limit = msg.getDatos().containsKey("limit") ? msg.getInt("limit") : 100;
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (eventBuffer != null) {
+                    for (ServerEvent ev : eventBuffer.snapshot(limit)) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("timestamp", ev.getTimestamp().toString());
+                        row.put("tipo", ev.getTipo().name());
+                        row.put("origen", ev.getOrigen());
+                        row.put("detalle", ev.getDetalle());
+                        row.put("cliente", ev.getClientContext() != null
+                                ? ev.getClientContext().toString() : null);
+                        rows.add(row);
+                    }
+                }
+                channel.sendMensaje(Mensaje.respuestaOk("eventos", GSON.toJson(rows))
+                        .put("total", rows.size()));
+                return true;
+            }
+            case OBTENER_LOGS: {
+                int limit = msg.getDatos().containsKey("limit") ? msg.getInt("limit") : 50;
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (logDAO != null) {
+                    for (Log l : logDAO.listarUltimos(limit)) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("id", l.getId());
+                        row.put("accion", l.getAccion());
+                        row.put("ip", l.getIpOrigen());
+                        row.put("fecha", l.getFechaHora() != null ? l.getFechaHora().toString() : null);
+                        row.put("detalle", l.getDetalles());
+                        rows.add(row);
+                    }
+                }
+                channel.sendMensaje(Mensaje.respuestaOk("logs", GSON.toJson(rows))
                         .put("total", rows.size()));
                 return true;
             }

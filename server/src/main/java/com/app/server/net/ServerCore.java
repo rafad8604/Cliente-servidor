@@ -1,6 +1,8 @@
 package com.app.server.net;
 
 import com.app.server.dao.ClienteConectadoDAO;
+import com.app.server.dao.LogDAO;
+import com.app.server.events.InMemoryEventBuffer;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.peer.PeerCatalog;
@@ -36,6 +38,8 @@ public class ServerCore {
     private final PeerRegistry peerRegistry;
     private final PeerCatalog peerCatalog;
     private final PeerProxyService peerProxy;
+    private final InMemoryEventBuffer eventBuffer;
+    private final LogDAO logDAO;
 
     private ServerSocket tcpServer;
     private DatagramSocket udpSocket;
@@ -47,14 +51,14 @@ public class ServerCore {
     public ServerCore(int tcpPort, int udpPort, int maxClients,
                       DocumentoService documentoService, LogService logService) {
         this(tcpPort, udpPort, maxClients, maxClients, documentoService, logService, null,
-                null, null, null);
+                null, null, null, null, null);
     }
 
     public ServerCore(int tcpPort, int udpPort, int tcpMax, int udpMax,
                       DocumentoService documentoService, LogService logService,
                       ServerEventBus eventBus) {
         this(tcpPort, udpPort, tcpMax, udpMax, documentoService, logService, eventBus,
-                null, null, null);
+                null, null, null, null, null);
     }
 
     public ServerCore(int tcpPort, int udpPort, int tcpMax, int udpMax,
@@ -63,6 +67,18 @@ public class ServerCore {
                       PeerRegistry peerRegistry,
                       PeerCatalog peerCatalog,
                       PeerProxyService peerProxy) {
+        this(tcpPort, udpPort, tcpMax, udpMax, documentoService, logService, eventBus,
+                peerRegistry, peerCatalog, peerProxy, null, null);
+    }
+
+    public ServerCore(int tcpPort, int udpPort, int tcpMax, int udpMax,
+                      DocumentoService documentoService, LogService logService,
+                      ServerEventBus eventBus,
+                      PeerRegistry peerRegistry,
+                      PeerCatalog peerCatalog,
+                      PeerProxyService peerProxy,
+                      InMemoryEventBuffer eventBuffer,
+                      LogDAO logDAO) {
         this.tcpPort = tcpPort;
         this.udpPort = udpPort;
         this.documentoService = documentoService;
@@ -71,6 +87,8 @@ public class ServerCore {
         this.peerRegistry = peerRegistry;
         this.peerCatalog = peerCatalog;
         this.peerProxy = peerProxy;
+        this.eventBuffer = eventBuffer;
+        this.logDAO = logDAO;
         this.tcpPool = new ClientPool(new SemaphoreResourcePool("tcp-pool", tcpMax), eventBus);
         this.udpPool = new ClientPool(new SemaphoreResourcePool("udp-pool", udpMax), eventBus);
     }
@@ -104,7 +122,7 @@ public class ServerCore {
     private CommandDispatcher nuevoDispatcher() {
         return new CommandDispatcher(
                 documentoService, logService, new ClienteConectadoDAO(), eventBus,
-                peerRegistry, peerCatalog);
+                peerRegistry, peerCatalog, eventBuffer, logDAO);
     }
 
     private void runTcp() {

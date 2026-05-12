@@ -24,6 +24,8 @@ class ComandoTest {
         assertTrue(nombres.contains("DESCARGAR_ENCRIPTADO"));
         assertTrue(nombres.contains("LISTAR_CLIENTES"));
         assertTrue(nombres.contains("LISTAR_SERVIDORES"));
+        assertTrue(nombres.contains("OBTENER_EVENTOS"));
+        assertTrue(nombres.contains("OBTENER_LOGS"));
         assertTrue(nombres.contains("RESPUESTA"));
         assertTrue(nombres.contains("ERROR"));
         assertTrue(nombres.contains("CHAT_MENSAJE"));

@@ -2,9 +2,13 @@ package com.app.server;
 
 import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.dao.DatabaseConnection;
+import com.app.server.dao.LogDAO;
 import com.app.server.events.ConsoleServerEventListener;
+import com.app.server.events.InMemoryEventBuffer;
+import com.app.server.events.ServerEvent;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
+import com.app.server.models.Log;
 import com.app.server.http.HttpGateway;
 import com.app.server.net.ServerCore;
 import com.app.server.peer.PeerCatalog;
@@ -20,7 +24,10 @@ import com.app.server.util.SessionLogManager;
 import com.app.shared.util.CryptoUtil;
 
 import javax.crypto.SecretKey;
+import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
 import java.util.Scanner;
 import java.util.UUID;
 
@@ -61,8 +68,10 @@ public class ServerApp {
         try { sessionLog = SessionLogManager.start(); }
         catch (Exception e) { System.err.println("[LOG] No se pudo iniciar log de sesion: " + e.getMessage()); }
 
+        String nombreNodo = parsed.nombre != null ? parsed.nombre : detectarHostname();
         System.out.println("============================================");
         System.out.println("  SERVIDOR DE MENSAJERIA Y ARCHIVOS (P2P)");
+        System.out.println("  Nombre: " + nombreNodo);
         System.out.println("  TCP: " + parsed.tcpPort + " | UDP: " + parsed.udpPort
                 + " | HTTP: " + parsed.httpPort);
         if (parsed.peersEnabled) {
@@ -72,6 +81,8 @@ public class ServerApp {
 
         ServerEventBus eventBus = new ServerEventBus();
         eventBus.subscribe(new ConsoleServerEventListener());
+        InMemoryEventBuffer eventBuffer = new InMemoryEventBuffer();
+        eventBus.subscribe(eventBuffer);
 
         ServerCore server = null;
         HttpGateway httpGateway = null;
@@ -95,8 +106,9 @@ public class ServerApp {
 
             if (parsed.peersEnabled) {
                 String localId = UUID.randomUUID().toString();
-                String host = InetAddress.getLocalHost().getHostAddress();
-                PeerInfo selfInfo = new PeerInfo(localId, host, parsed.peerPort,
+                String host = parsed.bindHost != null ? parsed.bindHost : detectarIpLan();
+                String nombre = parsed.nombre != null ? parsed.nombre : detectarHostname();
+                PeerInfo selfInfo = new PeerInfo(localId, nombre, host, parsed.peerPort,
                         parsed.tcpPort, parsed.udpPort);
                 peerRegistry = new PeerRegistry(localId, eventBus);
                 PeerClient peerClient = new PeerClient(selfInfo);
@@ -112,20 +124,28 @@ public class ServerApp {
 
                 peerCatalog.start();
 
-                System.out.println("[PEER] Servidor local id=" + localId.substring(0, 8) + "..."
+                System.out.println("[PEER] Servidor local nombre=" + nombre
+                        + " id=" + localId.substring(0, 8) + "..."
                         + " host=" + host);
+            } else {
+                System.out.println("[INIT] Modulo P2P deshabilitado (--peers=off)");
             }
 
+            LogDAO logDAO = new LogDAO();
             server = new ServerCore(parsed.tcpPort, parsed.udpPort,
                     parsed.maxClients, parsed.maxClients,
                     documentoService, logService, eventBus,
-                    peerRegistry, peerCatalog, peerProxy);
+                    peerRegistry, peerCatalog, peerProxy,
+                    eventBuffer, logDAO);
             server.start();
 
             httpGateway = new HttpGateway(parsed.httpPort, documentoService, logService,
-                    peerRegistry);
+                    peerRegistry, eventBuffer);
             httpGateway.start();
-            System.out.println("[HTTP] Interfaz web disponible en http://localhost:" + parsed.httpPort);
+            String ipLan = detectarIpLan();
+            System.out.println("[HTTP] Interfaz web disponible en:");
+            System.out.println("       http://localhost:" + parsed.httpPort);
+            System.out.println("       http://" + ipLan + ":" + parsed.httpPort + "  (LAN)");
 
             logService.registrar("SERVIDOR_INICIADO", "localhost",
                     "TCP:" + parsed.tcpPort + " UDP:" + parsed.udpPort
@@ -136,7 +156,8 @@ public class ServerApp {
             while (scanner.hasNextLine()) {
                 String line = scanner.nextLine().trim();
                 if (line.equalsIgnoreCase("exit")) break;
-                procesarConsola(line, server, peerRegistry, peerCatalog, eventBus);
+                procesarConsola(line, server, peerRegistry, peerCatalog, eventBus,
+                        eventBuffer, logDAO);
             }
 
             System.out.println("[SHUTDOWN] Deteniendo servidor...");
@@ -164,19 +185,22 @@ public class ServerApp {
 
     private static void mostrarComandosConsola(boolean peers) {
         System.out.println("\nComandos:");
-        System.out.println("  status        | clientes en pool TCP/UDP");
-        System.out.println("  events on/off | activa/desactiva eventos");
+        System.out.println("  status         | clientes en pool TCP/UDP");
+        System.out.println("  events on/off  | activa/desactiva log de eventos en consola");
+        System.out.println("  events [N]     | imprime los ultimos N eventos en memoria (default 20)");
+        System.out.println("  logs [N]       | imprime los ultimos N logs de BD (default 20)");
         if (peers) {
-            System.out.println("  peers         | lista peers en linea");
-            System.out.println("  remotos       | documentos publicados por peers");
+            System.out.println("  peers          | lista peers en linea");
+            System.out.println("  remotos        | documentos publicados por peers");
         }
-        System.out.println("  exit          | apaga el servidor");
+        System.out.println("  exit           | apaga el servidor");
         System.out.println();
     }
 
     private static void procesarConsola(String line, ServerCore server,
                                         PeerRegistry registry, PeerCatalog catalog,
-                                        ServerEventBus eventBus) {
+                                        ServerEventBus eventBus,
+                                        InMemoryEventBuffer eventBuffer, LogDAO logDAO) {
         if (line.equalsIgnoreCase("status")) {
             System.out.println("TCP: " + server.getTcpPool().getActiveCount() + "/" + server.getTcpPool().getMaxClients());
             System.out.println("UDP: " + server.getUdpPool().getActiveCount() + "/" + server.getUdpPool().getMaxClients());
@@ -186,12 +210,29 @@ public class ServerApp {
         } else if (line.equalsIgnoreCase("events off")) {
             eventBus.setEnabled(false);
             System.out.println("[EVT] listeners desactivados");
+        } else if (line.toLowerCase().startsWith("events")) {
+            int limit = parseLimitArg(line, "events", 20);
+            for (ServerEvent ev : eventBuffer.snapshot(limit)) {
+                System.out.println("  " + ev);
+            }
+            System.out.println("(" + Math.min(limit, eventBuffer.size()) + "/" + eventBuffer.size() + " eventos)");
+        } else if (line.toLowerCase().startsWith("logs")) {
+            int limit = parseLimitArg(line, "logs", 20);
+            try {
+                for (Log l : logDAO.listarUltimos(limit)) {
+                    System.out.println("  [" + l.getFechaHora() + "] " + l.getAccion()
+                            + " ip=" + l.getIpOrigen()
+                            + (l.getDetalles() != null ? " | " + l.getDetalles() : ""));
+                }
+            } catch (Exception e) {
+                System.err.println("[CONSOLA] Error consultando logs: " + e.getMessage());
+            }
         } else if (line.equalsIgnoreCase("peers")) {
             if (registry == null) { System.out.println("P2P deshabilitado"); return; }
             var online = registry.listarOnline();
             System.out.println("Peers en linea: " + online.size());
             for (PeerInfo p : online) {
-                System.out.println("  " + p.getId().substring(0, 8) + "  "
+                System.out.println("  " + p.getNombre() + " (" + p.getId().substring(0, 8) + ")  "
                         + p.getHost() + ":" + p.getPuertoPeer()
                         + "  tcp=" + p.getPuertoTcp() + " udp=" + p.getPuertoUdp()
                         + "  ultimaSenal=" + p.getUltimaSenal());
@@ -209,6 +250,50 @@ public class ServerApp {
         }
     }
 
+    private static int parseLimitArg(String line, String cmd, int defaultValue) {
+        String rest = line.substring(cmd.length()).trim();
+        if (rest.isEmpty()) return defaultValue;
+        try { return Math.max(1, Integer.parseInt(rest)); }
+        catch (NumberFormatException e) { return defaultValue; }
+    }
+
+    /**
+     * Detecta una IPv4 de una interfaz "up" no-loopback (la de la LAN). Si no
+     * encuentra una, cae a {@link InetAddress#getLocalHost()}.
+     */
+    static String detectarIpLan() {
+        try {
+            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
+            while (ifaces.hasMoreElements()) {
+                NetworkInterface ni = ifaces.nextElement();
+                if (!ni.isUp() || ni.isLoopback() || ni.isVirtual()) continue;
+                Enumeration<InetAddress> addrs = ni.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    InetAddress addr = addrs.nextElement();
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[NET] No se pudo detectar IP LAN: " + e.getMessage());
+        }
+        try {
+            return InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            return "127.0.0.1";
+        }
+    }
+
+    /** Nombre legible del nodo: hostname del SO o "servidor-N" si falla. */
+    static String detectarHostname() {
+        try {
+            String h = InetAddress.getLocalHost().getHostName();
+            if (h != null && !h.isBlank()) return h;
+        } catch (Exception ignored) { }
+        return "servidor";
+    }
+
     /** Parser simple de argumentos {@code --clave=valor}. */
     private static final class Args {
         int tcpPort = DEFAULT_TCP_PORT;
@@ -218,6 +303,8 @@ public class ServerApp {
         int discoveryPort = DEFAULT_DISCOVERY_PORT;
         int maxClients = DEFAULT_MAX_CLIENTS;
         boolean peersEnabled = true;
+        String bindHost = null;
+        String nombre = null;
 
         static Args parse(String[] args) {
             Args a = new Args();
@@ -236,6 +323,9 @@ public class ServerApp {
                         case "discovery": a.discoveryPort = Integer.parseInt(val); break;
                         case "max": a.maxClients = Integer.parseInt(val); break;
                         case "peers": a.peersEnabled = !"off".equalsIgnoreCase(val); break;
+                        case "host": a.bindHost = val; break;
+                        case "nombre":
+                        case "name": a.nombre = val; break;
                         default: System.err.println("[ARGS] Opcion desconocida: " + key);
                     }
                 } catch (NumberFormatException e) {

@@ -1,6 +1,7 @@
 com/app/server/http/HttpGatewayTest.class
 com/app/server/net/CommandDispatcherTest.class
 com/app/server/peer/PeerInfoTest.class
+com/app/server/events/InMemoryEventBufferTest.class
 com/app/server/dao/ClienteConectadoDAOTest.class
 com/app/server/models/ServerModelsTest.class
 com/app/server/net/UdpFragmentationTest.class

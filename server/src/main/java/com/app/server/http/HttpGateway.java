@@ -2,6 +2,8 @@ package com.app.server.http;
 
 import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.dao.LogDAO;
+import com.app.server.events.InMemoryEventBuffer;
+import com.app.server.events.ServerEvent;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.models.Log;
@@ -44,6 +46,7 @@ public class HttpGateway {
     private final DocumentoService documentoService;
     private final LogService logService;
     private final PeerRegistry peerRegistry;
+    private final InMemoryEventBuffer eventBuffer;
     private final ClienteConectadoDAO clienteConectadoDAO;
     private final LogDAO logDAO;
     private final Gson gson;
@@ -53,15 +56,21 @@ public class HttpGateway {
     private HttpServer server;
 
     public HttpGateway(int port, DocumentoService documentoService, LogService logService) {
-        this(port, documentoService, logService, null);
+        this(port, documentoService, logService, null, null);
     }
 
     public HttpGateway(int port, DocumentoService documentoService, LogService logService,
                        PeerRegistry peerRegistry) {
+        this(port, documentoService, logService, peerRegistry, null);
+    }
+
+    public HttpGateway(int port, DocumentoService documentoService, LogService logService,
+                       PeerRegistry peerRegistry, InMemoryEventBuffer eventBuffer) {
         this.port = port;
         this.documentoService = documentoService;
         this.logService = logService;
         this.peerRegistry = peerRegistry;
+        this.eventBuffer = eventBuffer;
         this.clienteConectadoDAO = new ClienteConectadoDAO();
         this.logDAO = new LogDAO();
         this.gson = new GsonBuilder().disableHtmlEscaping().create();
@@ -85,6 +94,7 @@ public class HttpGateway {
         server.createContext("/api/chat", this::handleChat);
         server.createContext("/api/download", this::handleDownload);
         server.createContext("/api/peers", this::handlePeers);
+        server.createContext("/api/events", this::handleEvents);
 
         server.createContext("/", new StaticFileHandler());
 
@@ -98,6 +108,27 @@ public class HttpGateway {
         }
     }
 
+    private void handleEvents(HttpExchange exchange) throws IOException {
+        if (!isMethod(exchange, "GET")) {
+            sendMethodNotAllowed(exchange, "GET");
+            return;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (eventBuffer != null) {
+            int limit = parseLimit(exchange.getRequestURI().getQuery());
+            for (ServerEvent ev : eventBuffer.snapshot(limit)) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("timestamp", ev.getTimestamp().toString());
+                row.put("tipo", ev.getTipo().name());
+                row.put("origen", ev.getOrigen());
+                row.put("detalle", ev.getDetalle());
+                row.put("cliente", ev.getClientContext() != null ? ev.getClientContext().toString() : null);
+                rows.add(row);
+            }
+        }
+        sendJson(exchange, 200, rows);
+    }
+
     private void handlePeers(HttpExchange exchange) throws IOException {
         if (!isMethod(exchange, "GET")) {
             sendMethodNotAllowed(exchange, "GET");
@@ -108,6 +139,7 @@ public class HttpGateway {
             for (PeerInfo p : peerRegistry.listarOnline()) {
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("id", p.getId());
+                row.put("nombre", p.getNombre());
                 row.put("host", p.getHost());
                 row.put("puertoPeer", p.getPuertoPeer());
                 row.put("puertoTcp", p.getPuertoTcp());

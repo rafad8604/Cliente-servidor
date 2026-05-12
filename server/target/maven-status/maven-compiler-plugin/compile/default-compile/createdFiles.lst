@@ -22,6 +22,7 @@ com/app/server/peer/PeerRegistry.class
 com/app/server/events/ServerEventBus.class
 com/app/server/net/ServerCore.class
 com/app/server/peer/PeerSession$1.class
+com/app/server/events/InMemoryEventBuffer.class
 com/app/server/peer/PeerProxyService.class
 com/app/server/ServerApp$Args.class
 com/app/server/net/UdpHandler$UdpSession.class

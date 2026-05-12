@@ -1,3 +1,4 @@
 com/app/client/net/NetworkClientTcpTest.class
-com/app/client/net/NetworkClientUdpTest.class
 com/app/client/models/HistorialDocumentoTest.class
+com/app/client/net/ClientDiscoveryServiceTest.class
+com/app/client/net/NetworkClientUdpTest.class

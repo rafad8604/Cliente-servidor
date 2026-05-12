@@ -88,13 +88,14 @@ public class PeerSession implements Runnable {
         switch (cmd) {
             case PEER_HELLO: {
                 remotePeerId = msg.getString("id");
+                String nombre = msg.getString("nombre");
                 int puertoPeer = msg.getInt("puertoPeer");
                 int puertoTcp = msg.getInt("puertoTcp");
                 int puertoUdp = msg.getInt("puertoUdp");
                 String host = msg.getString("host");
                 if (host == null) host = socket.getInetAddress().getHostAddress();
                 if (remotePeerId != null) {
-                    registry.aplicarHello(new PeerInfo(remotePeerId, host, puertoPeer, puertoTcp, puertoUdp));
+                    registry.aplicarHello(new PeerInfo(remotePeerId, nombre, host, puertoPeer, puertoTcp, puertoUdp));
                 }
                 enviarLinea(out, Mensaje.respuestaOk("peerId", registry.getLocalId()).toJson());
                 return true;

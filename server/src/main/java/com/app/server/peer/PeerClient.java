@@ -102,6 +102,7 @@ public class PeerClient {
         // Respondemos con nuestro HELLO.
         Mensaje hello = new Mensaje(Comando.PEER_HELLO)
                 .put("id", selfInfo.getId())
+                .put("nombre", selfInfo.getNombre())
                 .put("host", selfInfo.getHost())
                 .put("puertoPeer", selfInfo.getPuertoPeer())
                 .put("puertoTcp", selfInfo.getPuertoTcp())

@@ -13,6 +13,8 @@ public enum Comando {
     DESCARGAR_ENCRIPTADO,
     LISTAR_CLIENTES,
     LISTAR_SERVIDORES,
+    OBTENER_EVENTOS,
+    OBTENER_LOGS,
 
     // Comandos servidor -> cliente
     RESPUESTA,
