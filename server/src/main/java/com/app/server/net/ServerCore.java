@@ -1,7 +1,11 @@
 package com.app.server.net;
 
+import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
+import com.app.server.peer.PeerCatalog;
+import com.app.server.peer.PeerProxyService;
+import com.app.server.peer.PeerRegistry;
 import com.app.server.pool.SemaphoreResourcePool;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
@@ -12,11 +16,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 
 /**
- * Núcleo del servidor.
+ * Nucleo del servidor.
  *
- * Mantiene dos {@link ClientPool}s separados (uno para TCP, otro para UDP).
- * Cada pool es un adapter sobre un {@code ResourcePool} basado en Semaphore.
- * El servidor depende únicamente de estas abstracciones.
+ * <p>Mantiene dos {@link ClientPool}s separados (TCP y UDP) y delega los
+ * comandos en un {@link CommandDispatcher} comun. Si se proporcionan
+ * {@link PeerRegistry} y {@link PeerCatalog}, el dispatcher expone tambien
+ * documentos remotos y los handlers pueden hacer proxy via
+ * {@link PeerProxyService}.</p>
  */
 public class ServerCore {
 
@@ -27,6 +33,9 @@ public class ServerCore {
     private final DocumentoService documentoService;
     private final LogService logService;
     private final ServerEventBus eventBus;
+    private final PeerRegistry peerRegistry;
+    private final PeerCatalog peerCatalog;
+    private final PeerProxyService peerProxy;
 
     private ServerSocket tcpServer;
     private DatagramSocket udpSocket;
@@ -37,17 +46,31 @@ public class ServerCore {
 
     public ServerCore(int tcpPort, int udpPort, int maxClients,
                       DocumentoService documentoService, LogService logService) {
-        this(tcpPort, udpPort, maxClients, maxClients, documentoService, logService, null);
+        this(tcpPort, udpPort, maxClients, maxClients, documentoService, logService, null,
+                null, null, null);
     }
 
     public ServerCore(int tcpPort, int udpPort, int tcpMax, int udpMax,
                       DocumentoService documentoService, LogService logService,
                       ServerEventBus eventBus) {
+        this(tcpPort, udpPort, tcpMax, udpMax, documentoService, logService, eventBus,
+                null, null, null);
+    }
+
+    public ServerCore(int tcpPort, int udpPort, int tcpMax, int udpMax,
+                      DocumentoService documentoService, LogService logService,
+                      ServerEventBus eventBus,
+                      PeerRegistry peerRegistry,
+                      PeerCatalog peerCatalog,
+                      PeerProxyService peerProxy) {
         this.tcpPort = tcpPort;
         this.udpPort = udpPort;
         this.documentoService = documentoService;
         this.logService = logService;
         this.eventBus = eventBus;
+        this.peerRegistry = peerRegistry;
+        this.peerCatalog = peerCatalog;
+        this.peerProxy = peerProxy;
         this.tcpPool = new ClientPool(new SemaphoreResourcePool("tcp-pool", tcpMax), eventBus);
         this.udpPool = new ClientPool(new SemaphoreResourcePool("udp-pool", udpMax), eventBus);
     }
@@ -62,7 +85,8 @@ public class ServerCore {
         System.out.println("[SERVER] TCP escuchando en puerto " + tcpPort);
 
         udpSocket = new DatagramSocket(udpPort);
-        udpHandler = new UdpHandler(udpSocket, documentoService, logService, udpPool, eventBus);
+        CommandDispatcher dispatcher = nuevoDispatcher();
+        udpHandler = new UdpHandler(udpSocket, documentoService, logService, udpPool, eventBus, dispatcher);
         udpThread = new Thread(udpHandler, "udp-listener");
         udpThread.setDaemon(true);
         udpThread.start();
@@ -77,17 +101,24 @@ public class ServerCore {
         }
     }
 
+    private CommandDispatcher nuevoDispatcher() {
+        return new CommandDispatcher(
+                documentoService, logService, new ClienteConectadoDAO(), eventBus,
+                peerRegistry, peerCatalog);
+    }
+
     private void runTcp() {
         while (running) {
             try {
                 Socket clientSocket = tcpServer.accept();
-                System.out.println("[TCP] Nueva conexión de: " +
+                System.out.println("[TCP] Nueva conexion de: " +
                         clientSocket.getInetAddress().getHostAddress() + ":" + clientSocket.getPort());
 
                 if (tcpPool.tryAcquire()) {
                     TcpClientChannel channel = new TcpClientChannel(clientSocket);
                     ClientHandler handler = new ClientHandler(channel, tcpPool,
-                            documentoService, logService, eventBus);
+                            documentoService, logService, eventBus,
+                            nuevoDispatcher(), peerProxy);
                     tcpPool.registerHandler(handler);
 
                     if (eventBus != null) {
@@ -101,7 +132,7 @@ public class ServerCore {
                     handlerThread.start();
                 } else {
                     System.out.println("[TCP] Pool lleno (" + tcpPool.getActiveCount() +
-                            "/" + tcpPool.getMaxClients() + "). Rechazando conexión.");
+                            "/" + tcpPool.getMaxClients() + "). Rechazando conexion.");
                     if (eventBus != null) {
                         eventBus.publish(ServerEventType.TCP_CONEXION_RECHAZADA,
                                 new ClientContext(
@@ -110,20 +141,19 @@ public class ServerCore {
                                 "pool lleno");
                     }
                     try {
+                        String json = com.app.shared.protocol.Mensaje.error("Servidor lleno").toJson() + "\n";
                         clientSocket.getOutputStream().write(
-                                "{\"comando\":\"ERROR\",\"datos\":{\"status\":\"ERROR\",\"detalle\":\"Servidor lleno\"},\"timestamp\":\"\"}\n"
-                                        .getBytes());
+                                json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                         clientSocket.close();
-                    } catch (Exception e) {
-                        // ignore
+                    } catch (Exception ex) {
+                        System.err.println("[TCP] No se pudo notificar rechazo a "
+                                + clientSocket.getInetAddress().getHostAddress() + ": " + ex.getMessage());
                     }
                 }
             } catch (IOException e) {
                 if (running) {
-                    System.err.println("[TCP] Error aceptando conexión: " + e.getMessage());
-                    if (eventBus != null) {
-                        eventBus.publishError("tcp-listener", e, null);
-                    }
+                    System.err.println("[TCP] Error aceptando conexion: " + e.getMessage());
+                    if (eventBus != null) eventBus.publishError("tcp-listener", e, null);
                 }
             }
         }
@@ -131,7 +161,6 @@ public class ServerCore {
 
     public void stop() {
         running = false;
-
         tcpPool.shutdownAll();
 
         try {
@@ -140,9 +169,7 @@ public class ServerCore {
             System.err.println("[SERVER] Error cerrando TCP: " + e.getMessage());
         }
 
-        if (udpSocket != null && !udpSocket.isClosed()) {
-            udpSocket.close();
-        }
+        if (udpSocket != null && !udpSocket.isClosed()) udpSocket.close();
         if (udpHandler != null) udpHandler.stop();
 
         try {
@@ -158,22 +185,8 @@ public class ServerCore {
         System.out.println("[SERVER] Servidor detenido.");
     }
 
-    /**
-     * Compat: devuelve el pool TCP (usado por status de consola original).
-     */
-    public ClientPool getClientPool() {
-        return tcpPool;
-    }
-
-    public ClientPool getTcpPool() {
-        return tcpPool;
-    }
-
-    public ClientPool getUdpPool() {
-        return udpPool;
-    }
-
-    public boolean isRunning() {
-        return running;
-    }
+    public ClientPool getClientPool() { return tcpPool; }
+    public ClientPool getTcpPool() { return tcpPool; }
+    public ClientPool getUdpPool() { return udpPool; }
+    public boolean isRunning() { return running; }
 }

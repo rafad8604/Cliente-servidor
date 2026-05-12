@@ -5,6 +5,8 @@ import com.app.server.dao.LogDAO;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.models.Log;
+import com.app.server.peer.PeerInfo;
+import com.app.server.peer.PeerRegistry;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
 import com.app.shared.protocol.Mensaje;
@@ -41,6 +43,7 @@ public class HttpGateway {
     private final int port;
     private final DocumentoService documentoService;
     private final LogService logService;
+    private final PeerRegistry peerRegistry;
     private final ClienteConectadoDAO clienteConectadoDAO;
     private final LogDAO logDAO;
     private final Gson gson;
@@ -50,9 +53,15 @@ public class HttpGateway {
     private HttpServer server;
 
     public HttpGateway(int port, DocumentoService documentoService, LogService logService) {
+        this(port, documentoService, logService, null);
+    }
+
+    public HttpGateway(int port, DocumentoService documentoService, LogService logService,
+                       PeerRegistry peerRegistry) {
         this.port = port;
         this.documentoService = documentoService;
         this.logService = logService;
+        this.peerRegistry = peerRegistry;
         this.clienteConectadoDAO = new ClienteConectadoDAO();
         this.logDAO = new LogDAO();
         this.gson = new GsonBuilder().disableHtmlEscaping().create();
@@ -75,6 +84,7 @@ public class HttpGateway {
         server.createContext("/api/disconnect", this::handleDisconnect);
         server.createContext("/api/chat", this::handleChat);
         server.createContext("/api/download", this::handleDownload);
+        server.createContext("/api/peers", this::handlePeers);
 
         server.createContext("/", new StaticFileHandler());
 
@@ -86,6 +96,27 @@ public class HttpGateway {
             server.stop(0);
             server = null;
         }
+    }
+
+    private void handlePeers(HttpExchange exchange) throws IOException {
+        if (!isMethod(exchange, "GET")) {
+            sendMethodNotAllowed(exchange, "GET");
+            return;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (peerRegistry != null) {
+            for (PeerInfo p : peerRegistry.listarOnline()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("id", p.getId());
+                row.put("host", p.getHost());
+                row.put("puertoPeer", p.getPuertoPeer());
+                row.put("puertoTcp", p.getPuertoTcp());
+                row.put("puertoUdp", p.getPuertoUdp());
+                row.put("ultimaSenal", p.getUltimaSenal().toString());
+                rows.add(row);
+            }
+        }
+        sendJson(exchange, 200, rows);
     }
 
     private void handleHealth(HttpExchange exchange) throws IOException {
@@ -181,7 +212,10 @@ public class HttpGateway {
             return;
         }
 
-        validarSesionHttp(exchange);
+        ClienteConectado cliente = validarSesionHttp(exchange);
+        if (cliente == null) {
+            return;
+        }
 
         String fileName = getFileName(exchange);
         if (fileName == null || fileName.isBlank()) {
@@ -190,6 +224,10 @@ public class HttpGateway {
         }
 
         String safeFileName = sanitizeFileName(fileName);
+        if (safeFileName == null || safeFileName.isBlank()) {
+            sendError(exchange, 400, "Nombre de archivo invalido");
+            return;
+        }
         long declaredSize = parseContentLength(exchange.getRequestHeaders().getFirst("Content-Length"));
 
         try (InputStream body = exchange.getRequestBody()) {
@@ -484,11 +522,21 @@ public class HttpGateway {
     }
 
     private String sanitizeFileName(String input) {
-        return Paths.get(input).getFileName().toString();
+        if (input == null || input.isBlank()) return null;
+        try {
+            java.nio.file.Path leaf = Paths.get(input).getFileName();
+            if (leaf == null) return null;
+            String name = leaf.toString().trim();
+            if (name.isEmpty() || name.equals(".") || name.equals("..")) return null;
+            return name;
+        } catch (java.nio.file.InvalidPathException e) {
+            return null;
+        }
     }
 
     private String buildDownloadFileName(Documento doc, String tipo) {
         String base = sanitizeFileName(doc.getNombre());
+        if (base == null) base = "documento_" + doc.getId();
         if ("ENCRIPTADO".equals(tipo)) {
             return base + ".enc";
         }

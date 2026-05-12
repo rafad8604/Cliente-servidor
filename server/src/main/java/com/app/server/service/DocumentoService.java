@@ -10,12 +10,14 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.security.GeneralSecurityException;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Servicio de negocio para documentos.
@@ -25,6 +27,7 @@ import java.util.List;
 public class DocumentoService {
 
     private static final String STORAGE_DIR = "./storage";
+    public static final long MAX_FILE_SIZE = 1024L * 1024L * 1024L; // 1 GB
 
     private final DocumentoDAO documentoDAO;
     private final SecretKey serverKey;
@@ -54,6 +57,11 @@ public class DocumentoService {
      */
     public Documento procesarArchivo(String nombre, long tamano, String ipOrigen, InputStream dataIn)
             throws IOException, GeneralSecurityException, java.sql.SQLException {
+        if (tamano < 0 || tamano > MAX_FILE_SIZE) {
+            throw new IOException("Tamano de archivo invalido o supera el limite ("
+                    + MAX_FILE_SIZE + " bytes): " + tamano);
+        }
+
         File storageDir = new File(STORAGE_DIR);
         storageDir.mkdirs();
 
@@ -64,7 +72,14 @@ public class DocumentoService {
         try (FileOutputStream fos = new FileOutputStream(originalFile)) {
             byte[] buffer = new byte[8192];
             int bytesRead;
+            long totalRead = 0;
             while ((bytesRead = dataIn.read(buffer)) != -1) {
+                totalRead += bytesRead;
+                if (totalRead > MAX_FILE_SIZE) {
+                    fos.close();
+                    originalFile.delete();
+                    throw new IOException("Archivo excede el limite maximo: " + MAX_FILE_SIZE + " bytes");
+                }
                 fos.write(buffer, 0, bytesRead);
             }
         }
@@ -142,26 +157,60 @@ public class DocumentoService {
 
         byte[] iv = new byte[16];
         int read = encriptadoStream.read(iv);
-        if (read != 16) throw new IOException("No se pudo leer el IV de los datos encriptados");
+        if (read != 16) {
+            encriptadoStream.close();
+            throw new IOException("No se pudo leer el IV de los datos encriptados");
+        }
 
         PipedInputStream pipedIn = new PipedInputStream(8192);
         PipedOutputStream pipedOut = new PipedOutputStream(pipedIn);
 
+        AtomicReference<Thread> decryptRef = new AtomicReference<>();
         Thread decryptThread = new Thread(() -> {
-            try (var cos = CryptoUtil.decryptStream(pipedOut, serverKey, iv)) {
+            try (InputStream src = encriptadoStream;
+                 var cos = CryptoUtil.decryptStream(pipedOut, serverKey, iv)) {
                 byte[] buffer = new byte[8192];
                 int bytesRead;
-                while ((bytesRead = encriptadoStream.read(buffer)) != -1) {
+                while ((bytesRead = src.read(buffer)) != -1) {
                     cos.write(buffer, 0, bytesRead);
                 }
+            } catch (IOException e) {
+                // El consumidor cerro la pipe antes de tiempo: no es un error real.
+                if (!isPipeClosed(e)) {
+                    System.err.println("[DOC] Error desencriptando docId=" + documentoId + ": "
+                            + e.getClass().getSimpleName() + ": " + e.getMessage());
+                }
             } catch (Exception e) {
-                System.err.println("[DOC] Error desencriptando: " + e.getMessage());
+                System.err.println("[DOC] Error desencriptando docId=" + documentoId + ": "
+                        + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }, "decrypt-thread-" + documentoId);
         decryptThread.setDaemon(true);
+        decryptRef.set(decryptThread);
         decryptThread.start();
 
-        return pipedIn;
+        // Wrapper que cierra el hilo + stream encriptado cuando el consumidor cierre.
+        return new FilterInputStream(pipedIn) {
+            private volatile boolean closed = false;
+            @Override
+            public void close() throws IOException {
+                if (closed) return;
+                closed = true;
+                try {
+                    super.close();
+                } finally {
+                    Thread t = decryptRef.get();
+                    if (t != null && t.isAlive()) {
+                        t.interrupt();
+                    }
+                }
+            }
+        };
+    }
+
+    private static boolean isPipeClosed(IOException e) {
+        String msg = e.getMessage();
+        return msg != null && (msg.contains("Pipe closed") || msg.contains("Broken pipe"));
     }
 
     /**
