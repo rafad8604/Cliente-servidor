@@ -110,12 +110,17 @@ public class MainFrame extends JFrame {
         try {
             discoveryService = new ClientDiscoveryService();
             discoveryService.start();
-            // Refresca la tabla cada 3 s.
+            System.out.println("[GUI] Cliente Swing escuchando descubrimiento UDP (puerto "
+                    + ClientDiscoveryService.DISCOVERY_PORT + ")");
+            // Refresca la tabla cada 3 s (Timer de Swing -> EDT, seguro para UI).
             Timer t = new Timer(3000, e -> refrescarServidores());
             t.setRepeats(true);
             t.start();
+            // Primer refresh inmediato para no mostrar la tabla vacia
+            // hasta el primer tick de 3 s.
+            refrescarServidores();
         } catch (Exception e) {
-            System.err.println("[DISCOVERY] No se pudo iniciar descubrimiento: " + e.getMessage());
+            System.err.println("[GUI] No se pudo iniciar descubrimiento: " + e.getMessage());
         }
     }
 
@@ -720,10 +725,13 @@ public class MainFrame extends JFrame {
     }
 
     private void refrescarServidores() {
-        SwingUtilities.invokeLater(() -> {
-            modelServidores.setRowCount(0);
+        // El Timer de Swing ya ejecuta en el EDT, pero protegemos por si el
+        // metodo se llama desde otro hilo en el futuro.
+        Runnable update = () -> {
             if (discoveryService == null) return;
-            for (DiscoveredServer s : discoveryService.servidoresOnline()) {
+            List<DiscoveredServer> online = discoveryService.servidoresOnline();
+            modelServidores.setRowCount(0);
+            for (DiscoveredServer s : online) {
                 modelServidores.addRow(new Object[]{
                         s.getNombre(), s.getHost(), s.getPuertoTcp(),
                         s.getPuertoUdp(), s.getPuertoPeer(),
@@ -731,7 +739,9 @@ public class MainFrame extends JFrame {
                         s.getUltimaSenal().toString()
                 });
             }
-        });
+        };
+        if (SwingUtilities.isEventDispatchThread()) update.run();
+        else SwingUtilities.invokeLater(update);
     }
 
     private void usarServidorSeleccionado() {

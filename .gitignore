@@ -1,5 +1,13 @@
 # === Maven ===
-target/
+# Ignorar salida de compilación bajo target/, excepto JARs empaquetados y
+# dependencias copiadas en libs/ (para clonar y ejecutar sin Maven).
+# Nota: "target/" solo ignora todo y las reglas ! no pueden re-incluir bien
+# archivos dentro; por eso se ignora "contenido" con * y luego se exceptúa.
+**/target/*
+!**/target/
+!**/target/*.jar
+!**/target/libs/
+!**/target/libs/*.jar
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
@@ -35,7 +43,6 @@ nb-deployment/
 
 # === Java ===
 *.class
-*.jar
 *.war
 *.ear
 hs_err_pid*
@@ -57,8 +64,3 @@ storage/
 
 # Logs
 *.log
-
-# === Permitir artefactos compilados ===
-# Se versionan todos los target para poder ejecutar en PCs sin Maven.
-!**/target/
-!**/target/**

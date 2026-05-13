@@ -20,14 +20,12 @@ import com.app.server.peer.PeerRegistry;
 import com.app.server.peer.PeerServer;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
+import com.app.server.util.NetworkUtils;
 import com.app.server.util.SessionLogManager;
 import com.app.shared.util.CryptoUtil;
 
 import javax.crypto.SecretKey;
-import java.net.Inet4Address;
 import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.util.Enumeration;
 import java.util.Scanner;
 import java.util.UUID;
 
@@ -69,13 +67,30 @@ public class ServerApp {
         catch (Exception e) { System.err.println("[LOG] No se pudo iniciar log de sesion: " + e.getMessage()); }
 
         String nombreNodo = parsed.nombre != null ? parsed.nombre : detectarHostname();
+        String ipLan = parsed.bindHost != null ? parsed.bindHost : detectarIpLan();
+
         System.out.println("============================================");
         System.out.println("  SERVIDOR DE MENSAJERIA Y ARCHIVOS (P2P)");
         System.out.println("  Nombre: " + nombreNodo);
+        System.out.println("  Hostname SO: " + detectarHostname());
+        System.out.println("  IP LAN detectada: " + ipLan
+                + (parsed.bindHost != null ? "  (forzada via --host)" : "  (automatica)"));
         System.out.println("  TCP: " + parsed.tcpPort + " | UDP: " + parsed.udpPort
                 + " | HTTP: " + parsed.httpPort);
         if (parsed.peersEnabled) {
             System.out.println("  Peer TCP: " + parsed.peerPort + " | Discovery UDP: " + parsed.discoveryPort);
+        }
+        System.out.println("--- Interfaces de red ---");
+        for (String linea : NetworkUtils.describirInterfaces()) {
+            System.out.println("  " + linea);
+        }
+        if (parsed.bindHost == null) {
+            var candidatos = NetworkUtils.enumerarIpv4LAN();
+            if (candidatos.size() > 1) {
+                System.out.println("  (varias IPs candidatas; usa --host=<ip> si elige la equivocada:");
+                for (var c : candidatos) System.out.println("     - " + c.getHostAddress());
+                System.out.println("  )");
+            }
         }
         System.out.println("============================================");
 
@@ -106,7 +121,7 @@ public class ServerApp {
 
             if (parsed.peersEnabled) {
                 String localId = UUID.randomUUID().toString();
-                String host = parsed.bindHost != null ? parsed.bindHost : detectarIpLan();
+                String host = ipLan;
                 String nombre = parsed.nombre != null ? parsed.nombre : detectarHostname();
                 PeerInfo selfInfo = new PeerInfo(localId, nombre, host, parsed.peerPort,
                         parsed.tcpPort, parsed.udpPort);
@@ -142,7 +157,6 @@ public class ServerApp {
             httpGateway = new HttpGateway(parsed.httpPort, documentoService, logService,
                     peerRegistry, eventBuffer);
             httpGateway.start();
-            String ipLan = detectarIpLan();
             System.out.println("[HTTP] Interfaz web disponible en:");
             System.out.println("       http://localhost:" + parsed.httpPort);
             System.out.println("       http://" + ipLan + ":" + parsed.httpPort + "  (LAN)");
@@ -258,31 +272,12 @@ public class ServerApp {
     }
 
     /**
-     * Detecta una IPv4 de una interfaz "up" no-loopback (la de la LAN). Si no
-     * encuentra una, cae a {@link InetAddress#getLocalHost()}.
+     * Detecta una IPv4 LAN. Delega a {@link NetworkUtils} que filtra
+     * interfaces virtuales (Docker, Hyper-V, VirtualBox, VPN, ...) y prefiere
+     * rangos privados (192.168/16 &gt; 10/8 &gt; 172.16-31/12).
      */
     static String detectarIpLan() {
-        try {
-            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
-            while (ifaces.hasMoreElements()) {
-                NetworkInterface ni = ifaces.nextElement();
-                if (!ni.isUp() || ni.isLoopback() || ni.isVirtual()) continue;
-                Enumeration<InetAddress> addrs = ni.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    InetAddress addr = addrs.nextElement();
-                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
-                        return addr.getHostAddress();
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[NET] No se pudo detectar IP LAN: " + e.getMessage());
-        }
-        try {
-            return InetAddress.getLocalHost().getHostAddress();
-        } catch (Exception e) {
-            return "127.0.0.1";
-        }
+        return NetworkUtils.detectarIpLan();
     }
 
     /** Nombre legible del nodo: hostname del SO o "servidor-N" si falla. */

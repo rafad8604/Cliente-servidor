@@ -1,12 +1,12 @@
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/dao/ClienteConectadoDAOTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/events/InMemoryEventBufferTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/http/HttpGatewayTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/models/ServerModelsTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/net/ClientPoolTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/net/CommandDispatcherTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/net/UdpFragmentationTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/peer/PeerInfoTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/peer/PeerPingIntegrationTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/peer/PeerRegistryTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/service/DocumentoServiceTest.java
-/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/test/java/com/app/server/service/LogServiceTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\dao\ClienteConectadoDAOTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\events\InMemoryEventBufferTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\http\HttpGatewayTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\models\ServerModelsTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\net\ClientPoolTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\net\CommandDispatcherTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\net\UdpFragmentationTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\peer\PeerInfoTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\peer\PeerPingIntegrationTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\peer\PeerRegistryTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\service\DocumentoServiceTest.java
+D:\p2p\Cliente-servidor\server\src\test\java\com\app\server\service\LogServiceTest.java
