@@ -1,4 +1,20 @@
 -------------------------------------------------------------------------------
 Test set: com.app.server.net.UdpFragmentationTest
 -------------------------------------------------------------------------------
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.134 s -- in com.app.server.net.UdpFragmentationTest
+Tests run: 3, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 0.963 s <<< FAILURE! -- in com.app.server.net.UdpFragmentationTest
+com.app.server.net.UdpFragmentationTest.seqNumIncreaSecuencialmenteEnFragmentos -- Time elapsed: 0.016 s <<< ERROR!
+java.net.BindException: Address already in use: bind
+	at java.base/sun.nio.ch.Net.bind0(Native Method)
+	at java.base/sun.nio.ch.Net.bind(Net.java:573)
+	at java.base/sun.nio.ch.DatagramChannelImpl.bindInternal(DatagramChannelImpl.java:1329)
+	at java.base/sun.nio.ch.DatagramChannelImpl.bind(DatagramChannelImpl.java:1299)
+	at java.base/sun.nio.ch.DatagramSocketAdaptor.bind(DatagramSocketAdaptor.java:108)
+	at java.base/java.net.DatagramSocket.createDelegate(DatagramSocket.java:1425)
+	at java.base/java.net.DatagramSocket.<init>(DatagramSocket.java:328)
+	at java.base/java.net.DatagramSocket.<init>(DatagramSocket.java:387)
+	at java.base/java.net.DatagramSocket.<init>(DatagramSocket.java:353)
+	at com.app.server.net.UdpFragmentationTest.setup(UdpFragmentationTest.java:25)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+

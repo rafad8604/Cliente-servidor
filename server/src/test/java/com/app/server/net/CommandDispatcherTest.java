@@ -95,6 +95,12 @@ class CommandDispatcherTest {
     }
 
     @Test
+    void comandoListarDocumentosPrivadosValido() {
+        Mensaje msg = new Mensaje(Comando.LISTAR_DOCUMENTOS_PRIVADOS);
+        assertEquals(Comando.LISTAR_DOCUMENTOS_PRIVADOS, msg.getComando());
+    }
+
+    @Test
     void comandoListarDocumentosValido() {
         Mensaje msg = new Mensaje(Comando.LISTAR_DOCUMENTOS);
         assertEquals(Comando.LISTAR_DOCUMENTOS, msg.getComando());

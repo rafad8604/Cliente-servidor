@@ -7,7 +7,9 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * DAO para las tablas 'documentos' y 'documentos_chunks'.
@@ -266,6 +268,68 @@ public class DocumentoDAO {
         return docs;
     }
 
+    /**
+     * Documentos visibles en el catalogo publico (alcance TODOS).
+     */
+    public List<Documento> listarPublicos() throws SQLException {
+        String sql = "SELECT * FROM documentos WHERE envio_alcance = 'TODOS' ORDER BY fecha_creacion DESC";
+        List<Documento> docs = new ArrayList<>();
+        Connection conn = dbPool.getConnection();
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                docs.add(mapFromResultSet(rs));
+            }
+        } catch (SQLException e) {
+            if (isMissingColumn(e)) {
+                return listarTodos();
+            }
+            throw e;
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+        return docs;
+    }
+
+    /**
+     * Documentos dirigidos donde el cliente es destinatario o remitente.
+     */
+    public List<Documento> listarPrivadosParaCliente(String ip, int puerto, String protocolo)
+            throws SQLException {
+        String sql = "SELECT * FROM documentos WHERE envio_alcance = 'DIRIGIDO' AND ("
+                + "(dest_ip = ? AND dest_puerto = ? AND dest_protocolo = ?) OR "
+                + "(ip_propietario = ? AND remitente_puerto = ? AND remitente_protocolo = ?)"
+                + ") ORDER BY fecha_creacion DESC";
+        List<Documento> docs = new ArrayList<>();
+        Connection conn = dbPool.getConnection();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, ip);
+            ps.setInt(2, puerto);
+            ps.setString(3, protocolo);
+            ps.setString(4, ip);
+            ps.setInt(5, puerto);
+            ps.setString(6, protocolo);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    docs.add(mapFromResultSet(rs));
+                }
+            }
+        } catch (SQLException e) {
+            if (isMissingColumn(e)) {
+                return Collections.emptyList();
+            }
+            throw e;
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+        return docs;
+    }
+
+    private static boolean isMissingColumn(SQLException e) {
+        String state = e.getSQLState();
+        return "42S22".equals(state) || (e.getMessage() != null && e.getMessage().contains("Unknown column"));
+    }
+
     public List<Documento> listarPorTipo(Documento.Tipo tipo) throws SQLException {
         String sql = "SELECT * FROM documentos WHERE tipo = ? ORDER BY fecha_creacion DESC";
         List<Documento> docs = new ArrayList<>();
@@ -288,8 +352,65 @@ public class DocumentoDAO {
     // =========================================================================
 
     private long insertarDocumento(Connection conn, Documento doc) throws SQLException {
-        String sql = "INSERT INTO documentos (nombre, extension, tamano, ruta_local_original, hash_sha256, ip_propietario, tipo) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO documentos (nombre, extension, tamano, ruta_local_original, hash_sha256, ip_propietario, tipo, "
+                + "envio_alcance, dest_ip, dest_puerto, dest_protocolo, origen_servidor_etiqueta, origen_peer_id, "
+                + "remitente_nombre, remitente_puerto, remitente_protocolo) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            int i = 1;
+            ps.setString(i++, doc.getNombre());
+            ps.setString(i++, doc.getExtension());
+            ps.setLong(i++, doc.getTamano());
+            ps.setString(i++, doc.getRutaLocalOriginal());
+            ps.setString(i++, doc.getHashSha256());
+            ps.setString(i++, doc.getIpPropietario());
+            ps.setString(i++, doc.getTipo().name());
+            ps.setString(i++, doc.getEnvioAlcance().name());
+            setNullableString(ps, i++, doc.getDestIp());
+            if (doc.getDestPuerto() != null) {
+                ps.setInt(i++, doc.getDestPuerto());
+            } else {
+                ps.setNull(i++, Types.INTEGER);
+            }
+            setNullableString(ps, i++, doc.getDestProtocolo());
+            setNullableString(ps, i++, doc.getOrigenServidorEtiqueta());
+            setNullableString(ps, i++, doc.getOrigenPeerId());
+            setNullableString(ps, i++, doc.getRemitenteNombre());
+            if (doc.getRemitentePuerto() != null) {
+                ps.setInt(i++, doc.getRemitentePuerto());
+            } else {
+                ps.setNull(i++, Types.INTEGER);
+            }
+            setNullableString(ps, i++, doc.getRemitenteProtocolo());
+            ps.executeUpdate();
+
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (keys.next()) {
+                    long id = keys.getLong(1);
+                    doc.setId(id);
+                    return id;
+                }
+            }
+        } catch (SQLException e) {
+            if (isMissingColumn(e)) {
+                return insertarDocumentoLegacy(conn, doc);
+            }
+            throw e;
+        }
+        throw new SQLException("No se pudo obtener el ID generado para el documento");
+    }
+
+    private static void setNullableString(PreparedStatement ps, int idx, String v) throws SQLException {
+        if (v == null) {
+            ps.setNull(idx, Types.VARCHAR);
+        } else {
+            ps.setString(idx, v);
+        }
+    }
+
+    private long insertarDocumentoLegacy(Connection conn, Documento doc) throws SQLException {
+        String sql = "INSERT INTO documentos (nombre, extension, tamano, ruta_local_original, hash_sha256, ip_propietario, tipo) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, doc.getNombre());
             ps.setString(2, doc.getExtension());
@@ -299,7 +420,6 @@ public class DocumentoDAO {
             ps.setString(6, doc.getIpPropietario());
             ps.setString(7, doc.getTipo().name());
             ps.executeUpdate();
-
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) {
                     long id = keys.getLong(1);
@@ -322,7 +442,54 @@ public class DocumentoDAO {
         doc.setIpPropietario(rs.getString("ip_propietario"));
         doc.setTipo(Documento.Tipo.valueOf(rs.getString("tipo")));
         doc.setFechaCreacion(rs.getTimestamp("fecha_creacion").toLocalDateTime());
+
+        Set<String> cols = columnLabels(rs);
+        if (cols.contains("envio_alcance")) {
+            String ea = rs.getString("envio_alcance");
+            if (ea != null && !ea.isEmpty()) {
+                doc.setEnvioAlcance(Documento.EnvioAlcance.valueOf(ea));
+            }
+        }
+        if (cols.contains("dest_ip")) {
+            doc.setDestIp(rs.getString("dest_ip"));
+        }
+        if (cols.contains("dest_puerto")) {
+            int p = rs.getInt("dest_puerto");
+            if (!rs.wasNull()) {
+                doc.setDestPuerto(p);
+            }
+        }
+        if (cols.contains("dest_protocolo")) {
+            doc.setDestProtocolo(rs.getString("dest_protocolo"));
+        }
+        if (cols.contains("origen_servidor_etiqueta")) {
+            doc.setOrigenServidorEtiqueta(rs.getString("origen_servidor_etiqueta"));
+        }
+        if (cols.contains("origen_peer_id")) {
+            doc.setOrigenPeerId(rs.getString("origen_peer_id"));
+        }
+        if (cols.contains("remitente_nombre")) {
+            doc.setRemitenteNombre(rs.getString("remitente_nombre"));
+        }
+        if (cols.contains("remitente_puerto")) {
+            int rp = rs.getInt("remitente_puerto");
+            if (!rs.wasNull()) {
+                doc.setRemitentePuerto(rp);
+            }
+        }
+        if (cols.contains("remitente_protocolo")) {
+            doc.setRemitenteProtocolo(rs.getString("remitente_protocolo"));
+        }
         return doc;
+    }
+
+    private static Set<String> columnLabels(ResultSet rs) throws SQLException {
+        ResultSetMetaData md = rs.getMetaData();
+        Set<String> labels = new HashSet<>();
+        for (int i = 1; i <= md.getColumnCount(); i++) {
+            labels.add(md.getColumnLabel(i).toLowerCase());
+        }
+        return labels;
     }
 
     private int readFully(InputStream stream, byte[] buffer) throws IOException {

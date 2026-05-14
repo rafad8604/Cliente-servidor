@@ -121,7 +121,7 @@ public class ServerCore {
 
         udpSocket = new DatagramSocket(udpPort);
         CommandDispatcher dispatcher = nuevoDispatcher();
-        udpHandler = new UdpHandler(udpSocket, documentoService, logService, udpPool, eventBus, dispatcher);
+        udpHandler = new UdpHandler(udpSocket, documentoService, logService, udpPool, eventBus, dispatcher, peerProxy);
         udpThread = new Thread(udpHandler, "udp-listener");
         udpThread.setDaemon(true);
         udpThread.start();

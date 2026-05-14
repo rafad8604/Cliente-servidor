@@ -65,6 +65,14 @@ public class MainFrame extends JFrame {
     private DefaultTableModel modelDocumentos;
     private JTable tblDocumentos;
 
+    private DefaultTableModel modelDocumentosPrivados;
+    private JTable tblDocumentosPrivados;
+
+    // Destino de envio (mensaje / archivo)
+    private JRadioButton rbEnvioTodos;
+    private JRadioButton rbEnvioDirigido;
+    private ButtonGroup bgEnvio;
+
     // Componentes de servidores descubiertos
     private DefaultTableModel modelServidores;
     private JTable tblServidores;
@@ -157,7 +165,7 @@ public class MainFrame extends JFrame {
 
         // --- Tabla de clientes ---
         modelClientes = new DefaultTableModel(
-                new String[]{"Nombre", "IP", "Puerto", "Protocolo", "Conectado desde", "Servidor"}, 0) {
+                new String[]{"Nombre", "IP", "Puerto", "Protocolo", "Conectado desde", "Servidor", "PeerId"}, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
                 return false;
@@ -184,6 +192,29 @@ public class MainFrame extends JFrame {
         };
         shortIdRenderer.setHorizontalAlignment(SwingConstants.CENTER);
         tblDocumentos.getColumnModel().getColumn(7).setCellRenderer(shortIdRenderer);
+
+        modelDocumentosPrivados = new DefaultTableModel(
+                new String[]{"ID", "Resumen", "Remitente", "Origen servidor", "Fecha", "Tipo", "Servidor"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int col) {
+                return false;
+            }
+        };
+        tblDocumentosPrivados = createStyledTable(modelDocumentosPrivados);
+        tblDocumentosPrivados.getColumnModel().getColumn(6).setCellRenderer(shortIdRenderer);
+
+        rbEnvioTodos = new JRadioButton("Enviar a todos");
+        rbEnvioTodos.setSelected(true);
+        rbEnvioTodos.setForeground(TEXT_PRIMARY);
+        rbEnvioTodos.setBackground(BG_PANEL);
+        rbEnvioTodos.setFont(FONT_SMALL);
+        rbEnvioDirigido = new JRadioButton("Cliente seleccionado (pestaña Clientes)");
+        rbEnvioDirigido.setForeground(TEXT_PRIMARY);
+        rbEnvioDirigido.setBackground(BG_PANEL);
+        rbEnvioDirigido.setFont(FONT_SMALL);
+        bgEnvio = new ButtonGroup();
+        bgEnvio.add(rbEnvioTodos);
+        bgEnvio.add(rbEnvioDirigido);
 
         // --- Tabla de servidores online (descubrimiento UDP broadcast) ---
         modelServidores = new DefaultTableModel(
@@ -281,6 +312,7 @@ public class MainFrame extends JFrame {
         tabs.addTab("Servidores", createServidoresPanel());
         tabs.addTab("Clientes", createClientesPanel());
         tabs.addTab("Documentos", createDocumentosPanel());
+        tabs.addTab("Docs. privados", createDocumentosPrivadosPanel());
         tabs.addTab("Eventos", createEventosPanel());
         tabs.addTab("Logs (BD)", createLogsPanel());
 
@@ -341,6 +373,17 @@ public class MainFrame extends JFrame {
         lbl.setForeground(TEXT_PRIMARY);
         header.add(lbl);
 
+        JPanel destinoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        destinoPanel.setBackground(BG_PANEL);
+        destinoPanel.add(rbEnvioTodos);
+        destinoPanel.add(rbEnvioDirigido);
+
+        JPanel headerStack = new JPanel();
+        headerStack.setLayout(new BoxLayout(headerStack, BoxLayout.Y_AXIS));
+        headerStack.setBackground(BG_PANEL);
+        headerStack.add(header);
+        headerStack.add(destinoPanel);
+
         // Scroll del chat
         JScrollPane scrollChat = new JScrollPane(txtChat);
         scrollChat.setBorder(createRoundedBorder());
@@ -360,7 +403,7 @@ public class MainFrame extends JFrame {
         inputPanel.add(txtMensaje, BorderLayout.CENTER);
         inputPanel.add(buttonsPanel, BorderLayout.EAST);
 
-        panel.add(header, BorderLayout.NORTH);
+        panel.add(headerStack, BorderLayout.NORTH);
         panel.add(scrollChat, BorderLayout.CENTER);
         panel.add(inputPanel, BorderLayout.SOUTH);
 
@@ -433,6 +476,41 @@ public class MainFrame extends JFrame {
         panel.add(header, BorderLayout.NORTH);
         panel.add(scroll, BorderLayout.CENTER);
 
+        return panel;
+    }
+
+    private JPanel createDocumentosPrivadosPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 0));
+        panel.setBackground(BG_PANEL);
+        panel.setBorder(BorderFactory.createEmptyBorder(4, 4, 8, 8));
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(BG_PANEL);
+        JLabel lbl = new JLabel("Documentos privados (solo para ti)");
+        lbl.setFont(FONT_TITLE);
+        lbl.setForeground(TEXT_PRIMARY);
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        btnPanel.setBackground(BG_PANEL);
+        JButton btnRef = createStyledButton("Refrescar", ACCENT);
+        JButton btnOrig = createStyledButton("Descargar original", SUCCESS);
+        JButton btnHash = createStyledButton("Hash", new Color(249, 226, 175));
+        btnRef.addActionListener(e -> refrescarDocumentosPrivados());
+        btnOrig.addActionListener(e -> descargarPrivadoSeleccionado("ORIGINAL"));
+        btnHash.addActionListener(e -> descargarPrivadoSeleccionado("HASH"));
+        btnPanel.add(btnRef);
+        btnPanel.add(btnOrig);
+        btnPanel.add(btnHash);
+
+        header.add(lbl, BorderLayout.WEST);
+        header.add(btnPanel, BorderLayout.EAST);
+
+        JScrollPane scroll = new JScrollPane(tblDocumentosPrivados);
+        scroll.setBorder(createRoundedBorder());
+        styleScrollBar(scroll);
+
+        panel.add(header, BorderLayout.NORTH);
+        panel.add(scroll, BorderLayout.CENTER);
         return panel;
     }
 
@@ -610,6 +688,7 @@ public class MainFrame extends JFrame {
                 // Auto-refresh
                 refrescarClientes();
                 refrescarDocumentos();
+                refrescarDocumentosPrivados();
             });
         }).exceptionally(ex -> {
             SwingUtilities.invokeLater(() -> {
@@ -637,6 +716,27 @@ public class MainFrame extends JFrame {
         appendChat("[SISTEMA] Desconectado del servidor.", TEXT_SECONDARY);
     }
 
+    private NetworkClient.DestinoEnvio leerDestinoEnvio() {
+        if (rbEnvioTodos.isSelected()) {
+            return NetworkClient.DestinoEnvio.todos();
+        }
+        int row = tblClientes.getSelectedRow();
+        if (row < 0) {
+            return null;
+        }
+        String ip = modelClientes.getValueAt(row, 1).toString();
+        int port = modelClientes.getValueAt(row, 2) instanceof Number
+                ? ((Number) modelClientes.getValueAt(row, 2)).intValue()
+                : Integer.parseInt(modelClientes.getValueAt(row, 2).toString());
+        String proto = modelClientes.getValueAt(row, 3).toString();
+        Object pid = modelClientes.getValueAt(row, 6);
+        String peerId = pid != null ? pid.toString().trim() : "";
+        if (peerId.isEmpty()) {
+            peerId = "local";
+        }
+        return NetworkClient.DestinoEnvio.cliente(ip, port, proto, peerId);
+    }
+
     private void enviarMensaje() {
         if (networkClient == null || !networkClient.isConnected()) {
             showError("No estás conectado al servidor");
@@ -646,12 +746,24 @@ public class MainFrame extends JFrame {
         String texto = txtMensaje.getText().trim();
         if (texto.isEmpty() || texto.equals("Escribe un mensaje...")) return;
 
+        if (rbEnvioDirigido.isSelected()) {
+            if (tblClientes.getSelectedRow() < 0) {
+                showError("Selecciona un cliente en la pestaña Clientes o elige \"Enviar a todos\".");
+                return;
+            }
+        }
+        NetworkClient.DestinoEnvio destino = leerDestinoEnvio();
+        if (destino == null) {
+            showError("Selecciona un cliente en la pestaña Clientes.");
+            return;
+        }
+
         txtMensaje.setText("");
         appendChat("[TÚ] " + texto, new Color(166, 227, 161));
 
         CompletableFuture.supplyAsync(() -> {
             try {
-                return networkClient.enviarMensaje(texto);
+                return networkClient.enviarMensaje(texto, destino);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -690,6 +802,15 @@ public class MainFrame extends JFrame {
         File[] files = fc.getSelectedFiles();
         if (files.length == 0) return;
 
+        NetworkClient.DestinoEnvio baseDest = leerDestinoEnvio();
+        if (rbEnvioDirigido.isSelected() && baseDest == null) {
+            showError("Selecciona un cliente en la pestaña Clientes o elige \"Enviar a todos\".");
+            return;
+        }
+        if (baseDest == null) {
+            baseDest = NetworkClient.DestinoEnvio.todos();
+        }
+
         appendChat("[SISTEMA] Enviando " + files.length + " archivo(s)...", TEXT_SECONDARY);
 
         progressBar.setVisible(true);
@@ -705,7 +826,7 @@ public class MainFrame extends JFrame {
                     progressBar.setValue(pct);
                     lblProgress.setText(formatSize(bytesEnviados) + " / " + formatSize(fileSize));
                 });
-            }).thenAccept(resp -> {
+            }, baseDest).thenAccept(resp -> {
                 SwingUtilities.invokeLater(() -> {
                     String hash = resp.getString("hash");
                     appendChat("  [OK] " + file.getName() + " enviado. Hash: " + hash, SUCCESS);
@@ -867,6 +988,7 @@ public class MainFrame extends JFrame {
                         List<Map<String, Object>> clientes = gson.fromJson(clientesJson, (java.lang.reflect.Type) listType);
                         for (Map<String, Object> c : clientes) {
                             String nombreC = (String) c.getOrDefault("nombre", "");
+                            String peerId = c.get("peerId") != null ? c.get("peerId").toString() : "";
                             modelClientes.addRow(new Object[]{
                                     nombreC != null && !nombreC.isBlank() ? nombreC : c.get("ip"),
                                     c.get("ip"),
@@ -874,7 +996,8 @@ public class MainFrame extends JFrame {
                                             ((Number) c.get("puerto")).intValue() : c.get("puerto"),
                                     c.get("protocolo"),
                                     c.get("fechaInicio"),
-                                    c.getOrDefault("servidor", "local")
+                                    c.getOrDefault("servidor", "local"),
+                                    peerId
                             });
                         }
                     } catch (Exception e) {
@@ -937,6 +1060,131 @@ public class MainFrame extends JFrame {
         }).exceptionally(ex -> {
             SwingUtilities.invokeLater(() ->
                     appendChat("[ERROR] " + ex.getCause().getMessage(), ERROR_COLOR));
+            return null;
+        });
+    }
+
+    private void refrescarDocumentosPrivados() {
+        if (networkClient == null || !networkClient.isConnected()) return;
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return networkClient.listarDocumentosPrivados();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }).thenAccept(resp -> {
+            SwingUtilities.invokeLater(() -> {
+                modelDocumentosPrivados.setRowCount(0);
+                String docsJson = resp.getString("documentos");
+                if (docsJson != null) {
+                    try {
+                        Gson gson = new Gson();
+                        java.lang.reflect.Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
+                        List<Map<String, Object>> docs = gson.fromJson(docsJson, (java.lang.reflect.Type) listType);
+                        for (Map<String, Object> d : docs) {
+                            long id = d.get("id") instanceof Number ?
+                                    ((Number) d.get("id")).longValue() : 0;
+                            String servidor = d.get("servidor") != null ? d.get("servidor").toString() : "local";
+                            modelDocumentosPrivados.addRow(new Object[]{
+                                    id,
+                                    d.getOrDefault("resumen", d.get("nombre")),
+                                    d.getOrDefault("remitente", ""),
+                                    d.getOrDefault("origenServidorEtiqueta", ""),
+                                    d.get("fecha"),
+                                    d.get("tipo"),
+                                    servidor
+                            });
+                        }
+                    } catch (Exception e) {
+                        appendChat("[ERROR] Parseando documentos privados: " + e.getMessage(), ERROR_COLOR);
+                    }
+                }
+            });
+        }).exceptionally(ex -> {
+            SwingUtilities.invokeLater(() ->
+                    appendChat("[ERROR] " + ex.getCause().getMessage(), ERROR_COLOR));
+            return null;
+        });
+    }
+
+    private void descargarPrivadoSeleccionado(String tipo) {
+        if (networkClient == null || !networkClient.isConnected()) {
+            showError("No estás conectado al servidor");
+            return;
+        }
+        int row = tblDocumentosPrivados.getSelectedRow();
+        if (row < 0) {
+            showError("Selecciona un documento privado");
+            return;
+        }
+        Object idObj = modelDocumentosPrivados.getValueAt(row, 0);
+        long docId = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+        String nombre = modelDocumentosPrivados.getValueAt(row, 1).toString();
+        Object servObj = modelDocumentosPrivados.getValueAt(row, 6);
+        String servidor = servObj == null ? null : servObj.toString();
+        if (servidor != null && servidor.equalsIgnoreCase("local")) {
+            servidor = null;
+        }
+        final String servidorFinal = servidor;
+
+        if ("HASH".equals(tipo)) {
+            CompletableFuture.supplyAsync(() -> {
+                try {
+                    return networkClient.descargarHash(docId);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }).thenAccept(resp -> {
+                SwingUtilities.invokeLater(() -> {
+                    String hash = resp.getString("hash");
+                    appendChat("[HASH privado] " + nombre + ": " + hash, new Color(249, 226, 175));
+                });
+            }).exceptionally(ex -> {
+                SwingUtilities.invokeLater(() ->
+                        appendChat("[ERROR] " + ex.getCause().getMessage(), ERROR_COLOR));
+                return null;
+            });
+            return;
+        }
+
+        JFileChooser fc = new JFileChooser();
+        fc.setSelectedFile(new File(nombre));
+        fc.setDialogTitle("Guardar documento privado como...");
+        if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        File destino = fc.getSelectedFile();
+
+        progressBar.setVisible(true);
+        progressBar.setValue(0);
+        appendChat("  [DESCARGA privada] " + nombre + "...", ACCENT);
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                networkClient.descargarArchivo(docId, servidorFinal, destino, bytesRecibidos -> {
+                    SwingUtilities.invokeLater(() -> {
+                        lblProgress.setText(formatSize(bytesRecibidos) + " recibidos");
+                    });
+                });
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }).thenRun(() -> {
+            SwingUtilities.invokeLater(() -> {
+                appendChat("  [OK] Descarga privada: " + destino.getName(), SUCCESS);
+                progressBar.setValue(100);
+                lblProgress.setText("Completado");
+                Timer timer = new Timer(2000, evt -> {
+                    progressBar.setVisible(false);
+                    lblProgress.setText(" ");
+                });
+                timer.setRepeats(false);
+                timer.start();
+            });
+        }).exceptionally(ex -> {
+            SwingUtilities.invokeLater(() -> {
+                appendChat("  [ERROR] Descarga privada: " + ex.getCause().getMessage(), ERROR_COLOR);
+                progressBar.setVisible(false);
+            });
             return null;
         });
     }
@@ -1065,6 +1313,8 @@ public class MainFrame extends JFrame {
         txtNombre.setEnabled(enabled);
         rbTcp.setEnabled(enabled);
         rbUdp.setEnabled(enabled);
+        rbEnvioTodos.setEnabled(enabled);
+        rbEnvioDirigido.setEnabled(enabled);
     }
 
     private void showError(String msg) {
