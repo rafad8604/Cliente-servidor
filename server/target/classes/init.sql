@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS clientes_conectados (
     puerto INT NOT NULL,
     protocolo VARCHAR(10) NOT NULL COMMENT 'TCP, UDP o HTTP',
     fecha_inicio DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    nombre VARCHAR(100) NOT NULL DEFAULT '',
     PRIMARY KEY (ip, puerto)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -56,9 +57,30 @@ CREATE TABLE IF NOT EXISTS documentos_chunks (
     INDEX idx_documento_id (documento_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Migración idempotente para BDs existentes (MySQL 8.0.29+)
-ALTER TABLE documentos_chunks
-    ADD COLUMN IF NOT EXISTS codificacion VARCHAR(16) NOT NULL DEFAULT 'RAW';
+-- Migración idempotente para BDs existentes (compatible con MySQL 8.0+)
+DROP PROCEDURE IF EXISTS agregar_columna_si_no_existe;
+DELIMITER $$
+CREATE PROCEDURE agregar_columna_si_no_existe(
+    IN p_tabla VARCHAR(64),
+    IN p_columna VARCHAR(64),
+    IN p_definicion TEXT
+)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = p_tabla
+          AND COLUMN_NAME = p_columna
+    ) THEN
+        SET @sql = CONCAT('ALTER TABLE `', p_tabla, '` ADD COLUMN `', p_columna, '` ', p_definicion);
+        PREPARE stmt FROM @sql;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END$$
+DELIMITER ;
 
-ALTER TABLE clientes_conectados
-    ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) NOT NULL DEFAULT '';
+CALL agregar_columna_si_no_existe('documentos_chunks', 'codificacion', "VARCHAR(16) NOT NULL DEFAULT 'RAW'");
+CALL agregar_columna_si_no_existe('clientes_conectados', 'nombre', "VARCHAR(100) NOT NULL DEFAULT ''");
+
+DROP PROCEDURE IF EXISTS agregar_columna_si_no_existe;

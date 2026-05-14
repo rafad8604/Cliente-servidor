@@ -1,10 +1,3 @@
-docker exec -it mensajeria-mysql mysql -uroot -proot1234 mensajeria_db \
-  -e "DESCRIBE clientes_conectados;"
-
-  docker exec -it mensajeria-mysql mysql -uroot -proot1234 mensajeria_db \
-  -e "ALTER TABLE clientes_conectados ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) NOT NULL DEFAULT '';"
-
-
 # Sistema P2P de Mensajería y Archivos
 
 Proyecto Java multi-módulo. Varios servidores se descubren entre sí por UDP broadcast en la LAN, comparten su catálogo de documentos y un cliente conectado a cualquier servidor puede listar y descargar archivos de los demás. El cliente también descubre servidores por broadcast (no necesita IP de antemano).
