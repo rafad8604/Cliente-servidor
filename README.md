@@ -1,6 +1,6 @@
 # Sistema P2P de Mensajería y Archivos
 
-Proyecto Java multi-módulo. Varios servidores se descubren entre sí por UDP broadcast en la LAN, comparten su catálogo de documentos y un cliente conectado a cualquier servidor puede listar y descargar archivos de los demás. El cliente también descubre servidores por broadcast (no necesita IP de antemano).
+Proyecto Java multi-módulo. Varios servidores se descubren entre sí por UDP broadcast en la LAN y comparten el **catálogo público** (solo documentos con alcance «todos»). Un cliente conectado a cualquier servidor lista y descarga esos archivos (proxy si el origen es otro nodo). Además hay **envío dirigido** (mensaje o archivo a un cliente concreto), **documentos privados** (solo visibles para destinatario y remitente en el servidor donde quedaron) y **relay entre servidores** (`PEER_ENTREGAR_*`) cuando el destino está en otro peer. El cliente descubre servidores por broadcast (no necesita IP de antemano).
 
 ## Escenario típico
 
@@ -14,7 +14,7 @@ LAN
 
 - Los **servidores** se anuncian cada 5 s por UDP broadcast (`9200`). Cualquier nodo que escucha ese puerto los detecta.
 - Los **clientes** también escuchan ese broadcast → pestaña *"Servidores"* del GUI muestra la lista en vivo (`nombre · host · puertoTCP · puertoUDP`). Botón *"Usar seleccionado"* rellena el formulario.
-- Cada cliente se conecta a **un** servidor (TCP o UDP). Al listar documentos ve los locales + los publicados por peers (proxy automático al descargar).
+- Cada cliente se conecta a **un** servidor (TCP o UDP). Al listar documentos ve solo los **públicos** (locales + remotos vía caché); los **privados** se consultan aparte. La descarga remota sigue siendo proxy automático. El envío puede ser a **todos** o a **un cliente** (pestaña *Clientes*; campo `peerId` para enviar vía relay a otro servidor).
 
 ## Arquitectura
 
@@ -34,12 +34,12 @@ LAN
 - **`shared/`** — `Comando`, `Mensaje` (Gson JSON línea-delimitado), `CryptoUtil` (AES-256, SHA-256, PBKDF2).
 - **`server/`**
   - `net/` — TCP (`ServerCore`, `ClientHandler`, `TcpClientChannel`) y UDP (`UdpHandler`, `UdpClientChannel`) con fragmentación automática de mensajes grandes.
-  - `peer/` — `PeerDiscoveryService` (broadcast UDP), `PeerRegistry` (TTL), `PeerServer/PeerSession` (TCP entre servidores), `PeerClient`, `PeerCatalog` (caché TTL de docs remotos), `PeerProxyService` (proxy de descarga).
-  - `service/` — `DocumentoService` (cifrado, hash, chunks 50 MB), `LogService`.
+  - `peer/` — `PeerDiscoveryService` (broadcast UDP), `PeerRegistry` (TTL), `PeerServer/PeerSession` (TCP entre servidores: listados, descarga, `PEER_ENTREGAR_MENSAJE` / `PEER_ENTREGAR_ARCHIVO`), `PeerClient`, `PeerCatalog` (caché TTL de docs remotos **solo públicos**), `PeerProxyService` (proxy de descarga + relay de subida dirigida).
+  - `service/` — `DocumentoService` (cifrado, hash, chunks 50 MB; metadatos de alcance `TODOS`/`DIRIGIDO`, destino y remitente), `LogService`.
   - `dao/` — JDBC con pool de 10 conexiones.
   - `http/` — `HttpGateway` (REST + UI estática).
   - `events/` — bus de eventos asíncrono + consola formateada + `InMemoryEventBuffer` (últimos 500).
-- **`client/`** — `NetworkClient` (TCP/UDP, reensamblaje de fragmentos), `ClientDiscoveryService` (escucha broadcast UDP `9200`), GUI Swing + FlatLaf con pestañas, H2 local para historial.
+- **`client/`** — `NetworkClient` (TCP/UDP, reensamblaje de fragmentos, envío a todos o dirigido con `destServidor`), `ClientDiscoveryService` (escucha broadcast UDP `9200`), GUI Swing + FlatLaf con pestañas, H2 local para historial.
 
 ## Cómo funcionan los datos (BD + catálogo)
 
@@ -60,7 +60,7 @@ LAN
 │          │                                  │                  │
 │  ┌───────┴────────┐  PEER_LISTAR_DOCS       ┌────────┴───────┐ │
 │  │ PeerCatalog A  │◀────────cada 10s───────▶│ PeerCatalog B  │ │
-│  │ (cache TTL 30s)│  (solo metadata JSON)   │ (cache TTL 30s)│ │
+│  │ (cache TTL 30s)│  solo públicos (JSON)     │ (cache TTL 30s)│ │
 │  │ • docs de B    │                         │ • docs de A    │ │
 │  └────────────────┘                         └────────────────┘ │
 └────────────────────────────────────────────────────────────────┘
@@ -71,8 +71,8 @@ LAN
 | Cosa                          | Dónde vive                       | Quién la tiene                       |
 |-------------------------------|----------------------------------|--------------------------------------|
 | Bytes del archivo (cifrados)  | tabla `documentos_chunks` MySQL  | **solo el servidor donde se subió**  |
-| Metadatos (id, nombre, hash)  | tabla `documentos` MySQL         | **solo el servidor donde se subió**  |
-| Catálogo de docs de otros     | RAM (`PeerCatalog`), TTL 30 s    | **todos los servidores**, en caché   |
+| Metadatos (id, nombre, hash, alcance, destino, remitente, origen) | tabla `documentos` MySQL         | **solo el servidor donde se subió o recibió por relay**  |
+| Catálogo de docs de otros     | RAM (`PeerCatalog`), TTL 30 s    | **todos los servidores** (solo **públicos** de otros nodos)   |
 | Lista de servidores online    | RAM (`PeerRegistry`), TTL 15 s   | **todos los servidores**             |
 | Logs de acciones              | tabla `logs` MySQL               | **el servidor donde ocurrió**        |
 | Clientes conectados           | tabla `clientes_conectados`      | **el servidor al que están**         |
@@ -103,9 +103,12 @@ LAN
    ──LISTAR_DOCUMENTOS──▶ Server A
 
 2. Server A construye respuesta:
-   docs_locales = SELECT * FROM documentos       (MySQL local de A)
-   docs_remotos = PeerCatalog.listarRemotos()    (cache TTL en RAM, NO red)
+   docs_locales = documentos con envio_alcance = TODOS   (MySQL local de A)
+   docs_remotos = PeerCatalog (solo entradas públicas de otros nodos)
    respuesta = docs_locales ⊕ docs_remotos
+
+   Los envíos DIRIGIDO no entran en este listado; el cliente usa
+   LISTAR_DOCUMENTOS_PRIVADOS en el servidor correspondiente.
 
 3. Cliente recibe tabla unificada:
    ┌────┬──────────┬──────┬─────────┬────────┬─────────────────┐
@@ -125,6 +128,7 @@ Caso 1: archivo LOCAL al servidor que atiende
 ─────────────────────────────────────────────
 Cliente ──DESCARGAR_ARCHIVO {id:1, servidor:"local"}──▶ Server A
                                                           │
+                            comprueba acceso (público o privado si eres destinatario/remitente)
                             MySQL A: SELECT chunks       │
                             descifra AES                  │
 Cliente ◀──────────── bytes ──────────────────────────────┘
@@ -155,11 +159,20 @@ Cliente ◀──────────── bytes ──────┘   (r
 - Si subes a A y **A se cae**, ese archivo deja de ser descargable hasta que A vuelva.
 - El catálogo es **eventualmente consistente**: tras subir a A, B lo verá en ≤10 s.
 - **No se duplican bytes** en disco entre nodos, no se sincroniza nada pesado.
+- Los **DIRIGIDO** no entran en el catálogo público cruzado: cada uno vive solo en la MySQL del servidor que lo almacenó (local o tras relay).
 - Logs y `clientes_conectados` son **por nodo** (cada `OBTENER_LOGS` muestra solo el servidor al que estás conectado).
+- Esquema `documentos` en [`server/src/main/resources/init.sql`](server/src/main/resources/init.sql): `envio_alcance` (`TODOS`|`DIRIGIDO`), `dest_*`, `origen_servidor_etiqueta`, `origen_peer_id`, snapshot de remitente (`remitente_*`). En BD ya existente, las columnas se añaden con `CALL agregar_columna_si_no_existe(...)`.
+
+### Envío dirigido y relay
+
+- **Cliente → servidor local:** `ENVIAR_MENSAJE` / cabecera `ENVIAR_ARCHIVO` (TCP o UDP) con campos opcionales `envioAlcance`, `destIp`, `destPuerto`, `destProtocolo`, `destServidor` (`local` o UUID del peer). Por defecto sigue siendo público (`TODOS`).
+- **Cliente → otro servidor:** el servidor origen resuelve el peer y usa `PeerClient` para `PEER_ENTREGAR_*`; el receptor persiste como `DIRIGIDO` con metadatos de origen.
+- **Privados en GUI:** bandeja por refresco (`LISTAR_DOCUMENTOS_PRIVADOS`); no hay push TCP de chat entre clientes.
 
 ## Protocolo
 
 - Control: JSON línea-delimitado con `{comando, datos, timestamp}`.
+- Comandos relevantes: `LISTAR_DOCUMENTOS` (públicos), `LISTAR_DOCUMENTOS_PRIVADOS`, `LISTAR_CLIENTES` (incluye `peerId` por fila para `destServidor`), `ENVIAR_MENSAJE` / `ENVIAR_ARCHIVO` con destino opcional, `PEER_ENTREGAR_MENSAJE` / `PEER_ENTREGAR_ARCHIVO` entre servidores.
 - Streams binarios: bytes crudos después del header JSON (TCP) o fragmentados en datagramas tipo `DATOS` + `FIN` (UDP).
 - UDP usa datagramas de **8 KB** (compatible con `net.inet.udp.maxdgram` por defecto en macOS). Mensajes JSON más grandes se fragmentan en `CONTROL_FRAG` + `CONTROL_END` y se reensamblan en el receptor.
 
@@ -167,10 +180,13 @@ Cliente ◀──────────── bytes ──────┘   (r
 
 Pestañas en el panel derecho:
 - **Servidores** — descubrimiento UDP en vivo (auto-refresh cada 3 s + botón). Muestra `Nombre · Host · TCP · UDP · Peer · ID · Última señal`. Botón *"Usar seleccionado"* autocompleta host/puerto.
-- **Clientes** — clientes conectados al servidor actual (BD).
-- **Documentos** — locales y remotos en la misma tabla. Columna *"Servidor"* indica `local` o `<peerId>`. Al descargar un remoto, el servidor actual hace proxy.
+- **Clientes** — clientes conectados al servidor actual (y fusionados remotos cuando aplica). Incluye columna **PeerId** para elegir destino en envíos dirigidos o relay.
+- **Documentos** — solo **públicos** (locales y remotos). Columna *"Servidor"* indica `local` o `<peerId>`. Al descargar un remoto, el servidor actual hace proxy.
+- **Docs. privados** — mensajes/archivos `DIRIGIDO` donde eres destinatario o remitente en ese servidor: columnas resumen, remitente, **destinatario**, origen, fecha, tipo, servidor; refrescar y descargar como en documentos públicos.
 - **Eventos** — eventos en memoria del servidor (botón refrescar).
 - **Logs (BD)** — acciones persistidas (conexiones, uploads, descargas).
+
+**Chat (panel izquierdo):** radios *Enviar a todos* / *Cliente seleccionado* — se pueden cambiar **con la sesión conectada** (no bloquean con el resto del formulario de conexión). Los mensajes y adjuntos se anotan en el chat con el destino legible, p. ej. `[TÚ → Todos (catálogo público)]` o `[TÚ → ip:puerto PROTO @peer=…]`.
 
 ## Puertos
 
@@ -304,11 +320,11 @@ Buffer en memoria de los últimos 500 eventos (no requiere BD). `/api/logs` y la
 mvn test
 ```
 
-92 tests pasan en CI (40 tests de integración con MySQL/HTTP real están `@Disabled` y se corren manualmente).
+La suite `mvn test` incluye unitarios y pruebas livianas de red; los tests de integración con MySQL/HTTP real que estén `@Disabled` se ejecutan manualmente.
 
-Cobertura por módulo:
+Cobertura por módulo (resumen):
 - `shared` — `ComandoTest`, `MensajeTest`, `CryptoUtilTest`.
-- `server` — `CommandDispatcherTest`, `UdpFragmentationTest`, `PeerRegistryTest`, `PeerInfoTest`, `PeerPingIntegrationTest`, `InMemoryEventBufferTest`, `ClientPoolTest`, `ServerModelsTest`.
+- `server` — `CommandDispatcherTest`, `UdpFragmentationTest`, `PeerRegistryTest`, `PeerInfoTest`, `PeerPingIntegrationTest`, `PeerRelayIntegrationTest` (relay mínimo `PEER_ENTREGAR_MENSAJE`), `InMemoryEventBufferTest`, `ClientPoolTest`, `ServerModelsTest`.
 - `client` — `NetworkClientTcpTest`, `NetworkClientUdpTest`, `ClientDiscoveryServiceTest`, `HistorialDocumentoTest`.
 
 ## Notas
@@ -316,6 +332,7 @@ Cobertura por módulo:
 - MySQL debe estar arriba antes del servidor.
 - Liberar puertos: `9000`, `9001`, `8080`, `9100`, `9200`, `33306`.
 - Para multi-PC en LAN: cada PC con su propio Docker MySQL; el broadcast UDP debe pasar el firewall.
-- El cliente GUI muestra documentos locales y remotos en la misma tabla (columna `Servidor`).
+- El cliente GUI muestra documentos **públicos** locales y remotos en la misma tabla (columna `Servidor`); los privados van en *Docs. privados*.
 - Descarga encriptada de peers remotos no soportada (requeriría compartir clave AES entre nodos).
+- El canal peer entre servidores es TCP en claro en LAN (TLS queda como mejora futura).
 - Si un servidor se cae, sus documentos dejan de ser descargables hasta que vuelva (no hay replicación).
