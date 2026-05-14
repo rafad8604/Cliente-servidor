@@ -576,7 +576,7 @@ public class MainFrame extends JFrame {
         CompletableFuture.supplyAsync(() -> {
             try {
                 NetworkClient client = new NetworkClient(host, port, proto);
-                Mensaje sesion = client.conectar();
+                client.conectar();
 
                 client.setOnMessageReceived(msg -> {
                     SwingUtilities.invokeLater(() -> {
@@ -585,8 +585,6 @@ public class MainFrame extends JFrame {
                         appendChat("[" + remitente + "] " + texto, ACCENT);
                     });
                 });
-
-                try { client.setNombre(nombreCliente); } catch (Exception ignored) { }
 
                 return client;
             } catch (Exception e) {
@@ -602,6 +600,12 @@ public class MainFrame extends JFrame {
                 appendChat("[SISTEMA] ¡Conectado exitosamente!", SUCCESS);
 
                 setInputsEnabled(false);
+
+                // Enviar nombre de forma asíncrona y no bloqueante DESPUÉS
+                // de que los refrescos iniciales hayan podido arrancar.
+                CompletableFuture.runAsync(() -> {
+                    try { client.setNombre(nombreCliente); } catch (Exception ignored) { }
+                });
 
                 // Auto-refresh
                 refrescarClientes();
