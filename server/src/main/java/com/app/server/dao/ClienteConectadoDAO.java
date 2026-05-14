@@ -32,6 +32,18 @@ public class ClienteConectadoDAO {
             ps.setTimestamp(4, Timestamp.valueOf(cliente.getFechaInicio()));
             ps.setString(5, cliente.getNombre() != null ? cliente.getNombre() : "");
             ps.executeUpdate();
+        } catch (SQLException e) {
+            // Fallback si la columna 'nombre' aun no existe en el esquema
+            String sqlLegacy = "INSERT INTO clientes_conectados (ip, puerto, protocolo, fecha_inicio) " +
+                    "VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE fecha_inicio = VALUES(fecha_inicio), " +
+                    "protocolo = VALUES(protocolo)";
+            try (PreparedStatement ps = conn.prepareStatement(sqlLegacy)) {
+                ps.setString(1, cliente.getIp());
+                ps.setInt(2, cliente.getPuerto());
+                ps.setString(3, cliente.getProtocolo());
+                ps.setTimestamp(4, Timestamp.valueOf(cliente.getFechaInicio()));
+                ps.executeUpdate();
+            }
         } finally {
             dbPool.releaseConnection(conn);
         }
@@ -80,7 +92,7 @@ public class ClienteConectadoDAO {
                 c.setPuerto(rs.getInt("puerto"));
                 c.setProtocolo(rs.getString("protocolo"));
                 c.setFechaInicio(rs.getTimestamp("fecha_inicio").toLocalDateTime());
-                c.setNombre(rs.getString("nombre"));
+                try { c.setNombre(rs.getString("nombre")); } catch (Exception ignored) { }
                 clientes.add(c);
             }
         } finally {

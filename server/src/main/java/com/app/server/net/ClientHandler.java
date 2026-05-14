@@ -74,8 +74,14 @@ public class ClientHandler implements Runnable, Closeable {
         System.out.println("[HANDLER] Cliente conectado: " + ctx);
 
         try {
-            clienteDAO.registrar(new ClienteConectado(ctx.getIp(), ctx.getPort(), "TCP"));
-            if (logService != null) logService.logConexion(ctx.getIp(), "TCP");
+            try {
+                clienteDAO.registrar(new ClienteConectado(ctx.getIp(), ctx.getPort(), "TCP"));
+            } catch (Exception e) {
+                System.err.println("[HANDLER] Warning: no se pudo registrar cliente (BD): " + e.getMessage());
+            }
+            if (logService != null) {
+                try { logService.logConexion(ctx.getIp(), "TCP"); } catch (Exception ignored) { }
+            }
 
             Mensaje sesion = new Mensaje(Comando.SESION_INFO)
                     .put("status", "CONECTADO")
