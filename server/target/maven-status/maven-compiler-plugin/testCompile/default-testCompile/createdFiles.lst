@@ -1,4 +1,6 @@
+com\app\server\peer\PeerRelayIntegrationTest.class
 com\app\server\peer\PeerRegistryTest.class
+com\app\server\peer\PeerRelayIntegrationTest$StubDocumentoService.class
 com\app\server\events\InMemoryEventBufferTest.class
 com\app\server\http\HttpGatewayTest.class
 com\app\server\service\LogServiceTest.class

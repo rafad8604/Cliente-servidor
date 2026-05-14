@@ -1,5 +1,6 @@
 com\app\client\gui\MainFrame$5.class
 com\app\client\net\NetworkClient.class
+com\app\client\gui\MainFrame$14.class
 com\app\client\gui\MainFrame$1.class
 com\app\client\gui\MainFrame$12.class
 com\app\client\ClientApp.class
@@ -7,6 +8,7 @@ com\app\client\gui\MainFrame$8.class
 com\app\client\gui\MainFrame$3.class
 com\app\client\dao\HistorialDAO.class
 com\app\client\net\NetworkClient$Protocolo.class
+com\app\client\gui\MainFrame$15.class
 com\app\client\gui\MainFrame$4.class
 com\app\client\models\HistorialDocumento.class
 com\app\client\net\ClientDiscoveryService.class
@@ -20,4 +22,5 @@ com\app\client\gui\MainFrame$11.class
 com\app\client\gui\MainFrame$2.class
 com\app\client\net\DiscoveredServer.class
 com\app\client\dao\H2Connection.class
+com\app\client\net\NetworkClient$DestinoEnvio.class
 com\app\client\gui\MainFrame.class
