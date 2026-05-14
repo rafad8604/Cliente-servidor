@@ -1,8 +1,16 @@
 package com.app.server.peer;
 
+import com.app.server.dao.ClienteConectadoDAO;
+import com.app.server.dao.LogDAO;
+import com.app.server.events.InMemoryEventBuffer;
+import com.app.server.events.ServerEvent;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
+import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
+import com.app.server.models.Log;
+import com.app.server.net.BoundedInputStream;
+import com.app.server.net.DocumentoEnvioHelper;
 import com.app.server.service.DocumentoService;
 import com.app.shared.protocol.Comando;
 import com.app.shared.protocol.Mensaje;
@@ -36,17 +44,47 @@ public class PeerSession implements Runnable {
     private final Socket socket;
     private final PeerRegistry registry;
     private final DocumentoService documentoService;
+    private final ClienteConectadoDAO clienteDAO;
     private final ServerEventBus eventBus;
+    private final InMemoryEventBuffer eventBuffer;
+    private final LogDAO logDAO;
+    private final String selfLabel;
     private String remotePeerId = "desconocido";
 
     public PeerSession(Socket socket,
                        PeerRegistry registry,
                        DocumentoService documentoService,
+                       ClienteConectadoDAO clienteDAO,
                        ServerEventBus eventBus) {
+        this(socket, registry, documentoService, clienteDAO, eventBus, null, null, null);
+    }
+
+    public PeerSession(Socket socket,
+                       PeerRegistry registry,
+                       DocumentoService documentoService,
+                       ClienteConectadoDAO clienteDAO,
+                       ServerEventBus eventBus,
+                       InMemoryEventBuffer eventBuffer,
+                       LogDAO logDAO) {
+        this(socket, registry, documentoService, clienteDAO, eventBus, eventBuffer, logDAO, null);
+    }
+
+    public PeerSession(Socket socket,
+                       PeerRegistry registry,
+                       DocumentoService documentoService,
+                       ClienteConectadoDAO clienteDAO,
+                       ServerEventBus eventBus,
+                       InMemoryEventBuffer eventBuffer,
+                       LogDAO logDAO,
+                       String selfLabel) {
         this.socket = socket;
         this.registry = registry;
         this.documentoService = documentoService;
+        this.clienteDAO = clienteDAO;
         this.eventBus = eventBus;
+        this.eventBuffer = eventBuffer;
+        this.logDAO = logDAO;
+        this.selfLabel = selfLabel != null ? selfLabel : "servidor";
     }
 
     @Override
@@ -104,9 +142,28 @@ public class PeerSession implements Runnable {
                 enviarLinea(out, Mensaje.respuestaOk("pong", true).toJson());
                 return true;
             }
+            case PEER_LISTAR_CLIENTES: {
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (clienteDAO != null) {
+                    for (ClienteConectado c : clienteDAO.listarTodos()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("ip", c.getIp());
+                        row.put("puerto", c.getPuerto());
+                        row.put("protocolo", c.getProtocolo());
+                        row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
+                        row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
+                        row.put("servidor", selfLabel);
+                        row.put("peerId", registry.getLocalId());
+                        rows.add(row);
+                    }
+                }
+                enviarLinea(out, Mensaje.respuestaOk("clientes", GSON.toJson(rows))
+                        .put("total", rows.size()).toJson());
+                return true;
+            }
             case PEER_LISTAR_DOCS: {
                 List<Map<String, Object>> rows = new ArrayList<>();
-                for (Documento d : documentoService.listarDocumentos()) {
+                for (Documento d : documentoService.listarDocumentosPublicos()) {
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("id", d.getId());
                     row.put("nombre", d.getNombre());
@@ -157,6 +214,86 @@ public class PeerSession implements Runnable {
                     eventBus.publish(ServerEventType.PEER_DESCARGA_PROXY, "peer-session",
                             "peer=" + remotePeerId + " docId=" + docId + " (saliente)");
                 }
+                return true;
+            }
+            case PEER_ENTREGAR_MENSAJE: {
+                String texto = msg.getString("texto");
+                if (texto == null || texto.isBlank()) {
+                    enviarLinea(out, Mensaje.error("texto vacio").toJson());
+                    return true;
+                }
+                String ipProp = msg.getString("ipPropietario");
+                if (ipProp == null || ipProp.isBlank()) {
+                    ipProp = socket.getInetAddress().getHostAddress();
+                }
+                DocumentoService.DocumentoEnvioParams envio = DocumentoEnvioHelper.buildParamsFromRelay(msg);
+                try {
+                    Documento doc = documentoService.procesarMensaje(texto, ipProp, envio);
+                    enviarLinea(out, Mensaje.respuestaOk("hash", doc.getHashSha256())
+                            .put("documentoId", doc.getId())
+                            .put("mensaje", "Mensaje relay almacenado").toJson());
+                } catch (Exception e) {
+                    enviarLinea(out, Mensaje.error("Relay mensaje: " + e.getMessage()).toJson());
+                }
+                return true;
+            }
+            case PEER_ENTREGAR_ARCHIVO: {
+                String nombre = msg.getString("nombre");
+                long tamano = msg.getLong("tamano");
+                String ipProp = msg.getString("ipPropietario");
+                if (ipProp == null || ipProp.isBlank()) {
+                    ipProp = socket.getInetAddress().getHostAddress();
+                }
+                DocumentoService.DocumentoEnvioParams envio = DocumentoEnvioHelper.buildParamsFromRelay(msg);
+                try (InputStream limited = new BoundedInputStream(in, tamano)) {
+                    Documento doc = documentoService.procesarArchivo(nombre, tamano, ipProp, limited, envio);
+                    enviarLinea(out, Mensaje.respuestaOk("hash", doc.getHashSha256())
+                            .put("documentoId", doc.getId())
+                            .put("mensaje", "Archivo relay almacenado").toJson());
+                } catch (Exception e) {
+                    enviarLinea(out, Mensaje.error("Relay archivo: " + e.getMessage()).toJson());
+                }
+                return true;
+            }
+            case PEER_OBTENER_LOGS: {
+                int limit = msg.getDatos().containsKey("limit") ? msg.getInt("limit") : 50;
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (logDAO != null) {
+                    for (Log l : logDAO.listarUltimos(limit)) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("id", l.getId());
+                        row.put("accion", l.getAccion());
+                        row.put("ip", l.getIpOrigen());
+                        row.put("fecha", l.getFechaHora() != null ? l.getFechaHora().toString() : null);
+                        row.put("detalle", l.getDetalles());
+                        rows.add(row);
+                    }
+                }
+                enviarLinea(out, Mensaje.respuestaOk("logs", GSON.toJson(rows))
+                        .put("total", rows.size()).toJson());
+                return true;
+            }
+            case PEER_OBTENER_EVENTOS: {
+                int limit = msg.getDatos().containsKey("limit") ? msg.getInt("limit") : 100;
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (eventBuffer != null) {
+                    for (ServerEvent ev : eventBuffer.snapshot(limit)) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("timestamp", ev.getTimestamp().toString());
+                        row.put("tipo", ev.getTipo().name());
+                        row.put("origen", ev.getOrigen());
+                        row.put("detalle", ev.getDetalle());
+                        if (ev.getClientContext() != null) {
+                            row.put("cliente", ev.getClientContext().toString());
+                            row.put("clienteIp", ev.getClientContext().getIp());
+                            row.put("clientePuerto", ev.getClientContext().getPort());
+                            row.put("clienteProtocolo", ev.getClientContext().getProtocol());
+                        }
+                        rows.add(row);
+                    }
+                }
+                enviarLinea(out, Mensaje.respuestaOk("eventos", GSON.toJson(rows))
+                        .put("total", rows.size()).toJson());
                 return true;
             }
             default:

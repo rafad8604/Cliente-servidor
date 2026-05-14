@@ -35,7 +35,7 @@ class PeerPingIntegrationTest {
         int puerto = puertoLibre();
         PeerRegistry registry = new PeerRegistry("server-A", null);
         // documentoService=null porque PING no lo usa; el constructor lo acepta.
-        server = new PeerServer(puerto, registry, null, null);
+        server = new PeerServer(puerto, registry, null, null, null);
         server.start();
 
         // Esperar un instante a que el accept thread este listo.
@@ -55,7 +55,7 @@ class PeerPingIntegrationTest {
     void helloDelClienteSeRegistraEnElServidor() throws Exception {
         int puerto = puertoLibre();
         PeerRegistry registry = new PeerRegistry("server-A", null);
-        server = new PeerServer(puerto, registry, null, null);
+        server = new PeerServer(puerto, registry, null, null, null);
         server.start();
         Thread.sleep(100);
 

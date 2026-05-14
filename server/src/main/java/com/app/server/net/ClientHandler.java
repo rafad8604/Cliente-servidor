@@ -6,6 +6,7 @@ import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.peer.PeerClient;
+import com.app.server.peer.PeerInfo;
 import com.app.server.peer.PeerProxyService;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
@@ -74,8 +75,14 @@ public class ClientHandler implements Runnable, Closeable {
         System.out.println("[HANDLER] Cliente conectado: " + ctx);
 
         try {
-            clienteDAO.registrar(new ClienteConectado(ctx.getIp(), ctx.getPort(), "TCP"));
-            if (logService != null) logService.logConexion(ctx.getIp(), "TCP");
+            try {
+                clienteDAO.registrar(new ClienteConectado(ctx.getIp(), ctx.getPort(), "TCP"));
+            } catch (Exception e) {
+                System.err.println("[HANDLER] Warning: no se pudo registrar cliente (BD): " + e.getMessage());
+            }
+            if (logService != null) {
+                try { logService.logConexion(ctx.getIp(), "TCP"); } catch (Exception ignored) { }
+            }
 
             Mensaje sesion = new Mensaje(Comando.SESION_INFO)
                     .put("status", "CONECTADO")
@@ -145,8 +152,58 @@ public class ClientHandler implements Runnable, Closeable {
 
         System.out.println("[HANDLER] Recibiendo archivo: " + nombre + " (" + tamano + " bytes)");
 
+        String remitenteNombre = "";
+        DocumentoService.DocumentoEnvioParams envio = DocumentoEnvioHelper.buildLocalParams(
+                msg, ctx, remitenteNombre);
+        String destServidor = msg.getString("destServidor");
+
         InputStream limitedStream = new BoundedInputStream(socketIn, tamano);
-        Documento doc = documentoService.procesarArchivo(nombre, tamano, ctx.getIp(), limitedStream);
+
+        if (peerProxy != null && DocumentoEnvioHelper.esPeerRemoto(destServidor, peerProxy.getRegistry())) {
+            if (envio.getAlcance() != Documento.EnvioAlcance.DIRIGIDO) {
+                channel.sendMensaje(Mensaje.error("Envio a otro servidor requiere envioAlcance DIRIGIDO"));
+                return;
+            }
+            if (envio.getDestIp() == null || envio.getDestPuerto() == null || envio.getDestProtocolo() == null) {
+                channel.sendMensaje(Mensaje.error("Destino incompleto: destIp, destPuerto, destProtocolo"));
+                return;
+            }
+            PeerInfo destPeer = peerProxy.getRegistry().getById(destServidor.trim()).orElse(null);
+            if (destPeer == null) {
+                channel.sendMensaje(Mensaje.error("Peer destino no encontrado u offline"));
+                return;
+            }
+            String localId = peerProxy.getRegistry().getLocalId();
+            String origenEtiqueta = peerProxy.getPeerClient().getSelfInfo().getNombre()
+                    + " (" + localId.substring(0, Math.min(8, localId.length())) + ")";
+            Mensaje relay = DocumentoEnvioHelper.buildRelayArchivoHeader(
+                    msg, nombre, tamano, ctx, remitenteNombre, origenEtiqueta, localId);
+            try {
+                Mensaje respPeer = peerProxy.relayEntregarArchivo(destServidor.trim(), relay, limitedStream, tamano);
+                if (respPeer.getComando() == Comando.ERROR) {
+                    channel.sendMensaje(Mensaje.error(
+                            respPeer.getString("detalle") != null
+                                    ? respPeer.getString("detalle") : "Error en peer remoto"));
+                    return;
+                }
+                channel.sendMensaje(respPeer);
+            } catch (Exception e) {
+                channel.sendMensaje(Mensaje.error("Relay archivo a peer: " + e.getMessage()));
+            }
+            if (logService != null) {
+                logService.logArchivoRecibido(ctx.getIp(), nombre + " (relay)", tamano);
+            }
+            return;
+        }
+
+        if (envio.getAlcance() == Documento.EnvioAlcance.DIRIGIDO) {
+            if (envio.getDestIp() == null || envio.getDestPuerto() == null || envio.getDestProtocolo() == null) {
+                channel.sendMensaje(Mensaje.error("Destino incompleto para envio DIRIGIDO"));
+                return;
+            }
+        }
+
+        Documento doc = documentoService.procesarArchivo(nombre, tamano, ctx.getIp(), limitedStream, envio);
 
         if (logService != null) logService.logArchivoRecibido(ctx.getIp(), nombre, tamano);
 
@@ -167,6 +224,10 @@ public class ClientHandler implements Runnable, Closeable {
         Documento doc = documentoService.obtenerDocumento(docId);
         if (doc == null) {
             channel.sendMensaje(Mensaje.error("Documento no encontrado: " + docId));
+            return;
+        }
+        if (!documentoService.puedeAccederDocumentoLocal(docId, ctx.getIp(), ctx.getPort(), ctx.getProtocol())) {
+            channel.sendMensaje(Mensaje.error("Acceso denegado al documento"));
             return;
         }
         if (logService != null) logService.logDescarga(ctx.getIp(), doc.getNombre(), "ORIGINAL");
@@ -200,6 +261,10 @@ public class ClientHandler implements Runnable, Closeable {
         Documento doc = documentoService.obtenerDocumento(docId);
         if (doc == null) {
             channel.sendMensaje(Mensaje.error("Documento no encontrado: " + docId));
+            return;
+        }
+        if (!documentoService.puedeAccederDocumentoLocal(docId, ctx.getIp(), ctx.getPort(), ctx.getProtocol())) {
+            channel.sendMensaje(Mensaje.error("Acceso denegado al documento"));
             return;
         }
         if (logService != null) logService.logDescarga(ctx.getIp(), doc.getNombre(), "ENCRIPTADO");
@@ -315,40 +380,5 @@ public class ClientHandler implements Runnable, Closeable {
             if (b != '\r') lineBuffer.write(b);
         }
         return lineBuffer.toString(StandardCharsets.UTF_8);
-    }
-
-    /**
-     * InputStream que limita la lectura a un numero especifico de bytes.
-     */
-    static class BoundedInputStream extends InputStream {
-        private final InputStream in;
-        private long remaining;
-
-        BoundedInputStream(InputStream in, long limit) {
-            this.in = in;
-            this.remaining = limit;
-        }
-
-        @Override
-        public int read() throws IOException {
-            if (remaining <= 0) return -1;
-            int b = in.read();
-            if (b != -1) remaining--;
-            return b;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) throws IOException {
-            if (remaining <= 0) return -1;
-            int toRead = (int) Math.min(len, remaining);
-            int bytesRead = in.read(b, off, toRead);
-            if (bytesRead > 0) remaining -= bytesRead;
-            return bytesRead;
-        }
-
-        @Override
-        public int available() throws IOException {
-            return (int) Math.min(in.available(), remaining);
-        }
     }
 }

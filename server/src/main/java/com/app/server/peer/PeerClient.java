@@ -45,6 +45,18 @@ public class PeerClient {
         return ejecutarSimple(peer, new Mensaje(Comando.PEER_LISTAR_DOCS));
     }
 
+    public Mensaje listarClientes(PeerInfo peer) throws IOException {
+        return ejecutarSimple(peer, new Mensaje(Comando.PEER_LISTAR_CLIENTES));
+    }
+
+    public Mensaje obtenerLogs(PeerInfo peer, int limit) throws IOException {
+        return ejecutarSimple(peer, new Mensaje(Comando.PEER_OBTENER_LOGS).put("limit", limit));
+    }
+
+    public Mensaje obtenerEventos(PeerInfo peer, int limit) throws IOException {
+        return ejecutarSimple(peer, new Mensaje(Comando.PEER_OBTENER_EVENTOS).put("limit", limit));
+    }
+
     public Mensaje hash(PeerInfo peer, long documentoId) throws IOException {
         return ejecutarSimple(peer, new Mensaje(Comando.PEER_DESCARGAR_HASH).put("documentoId", documentoId));
     }
@@ -76,6 +88,50 @@ public class PeerClient {
         } catch (IOException e) {
             socket.close();
             throw e;
+        }
+    }
+
+    public PeerInfo getSelfInfo() {
+        return selfInfo;
+    }
+
+    public Mensaje entregarMensajePeer(PeerInfo peer, Mensaje relay) throws IOException {
+        relay.setComando(Comando.PEER_ENTREGAR_MENSAJE);
+        try (Socket socket = abrirSocket(peer)) {
+            handshake(socket);
+            OutputStream out = socket.getOutputStream();
+            InputStream in = socket.getInputStream();
+            enviarLinea(out, relay.toJson());
+            return leerMensaje(in);
+        }
+    }
+
+    /**
+     * Envía cabecera JSON (comando PEER_ENTREGAR_ARCHIVO) y a continuación {@code tamanoBody} bytes del cuerpo.
+     */
+    public Mensaje entregarArchivoPeer(PeerInfo peer, Mensaje relayHeader, InputStream body, long tamanoBody)
+            throws IOException {
+        relayHeader.setComando(Comando.PEER_ENTREGAR_ARCHIVO);
+        Socket socket = abrirSocket(peer);
+        try {
+            handshake(socket);
+            OutputStream out = socket.getOutputStream();
+            InputStream in = socket.getInputStream();
+            enviarLinea(out, relayHeader.toJson());
+            byte[] buf = new byte[8192];
+            long remaining = tamanoBody;
+            while (remaining > 0) {
+                int n = body.read(buf, 0, (int) Math.min(buf.length, remaining));
+                if (n <= 0) {
+                    throw new IOException("Cuerpo de archivo incompleto al relay peer");
+                }
+                out.write(buf, 0, n);
+                remaining -= n;
+            }
+            out.flush();
+            return leerMensaje(in);
+        } finally {
+            socket.close();
         }
     }
 

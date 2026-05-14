@@ -2,8 +2,10 @@ package com.app.server.peer;
 
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
+import com.app.shared.protocol.Mensaje;
 
 import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * Servicio de proxy hacia peers.
@@ -41,5 +43,26 @@ public class PeerProxyService {
         PeerInfo peer = registry.getById(peerId)
                 .orElseThrow(() -> new IOException("Peer no disponible: " + peerId));
         return peerClient.hash(peer, documentoId).getString("hash");
+    }
+
+    public PeerRegistry getRegistry() {
+        return registry;
+    }
+
+    public PeerClient getPeerClient() {
+        return peerClient;
+    }
+
+    public Mensaje relayEntregarMensaje(String peerId, Mensaje relayPayload) throws IOException {
+        PeerInfo peer = registry.getById(peerId)
+                .orElseThrow(() -> new IOException("Peer no disponible: " + peerId));
+        return peerClient.entregarMensajePeer(peer, relayPayload);
+    }
+
+    public Mensaje relayEntregarArchivo(String peerId, Mensaje relayHeader, InputStream body, long tamano)
+            throws IOException {
+        PeerInfo peer = registry.getById(peerId)
+                .orElseThrow(() -> new IOException("Peer no disponible: " + peerId));
+        return peerClient.entregarArchivoPeer(peer, relayHeader, body, tamano);
     }
 }

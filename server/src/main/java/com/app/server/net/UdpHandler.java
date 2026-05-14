@@ -5,6 +5,8 @@ import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
+import com.app.server.peer.PeerInfo;
+import com.app.server.peer.PeerProxyService;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
 import com.app.shared.protocol.Comando;
@@ -25,8 +27,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Servidor UDP.
@@ -56,22 +60,35 @@ public class UdpHandler implements Runnable {
     private final ClientPool udpPool;
     private final ServerEventBus eventBus;
     private final CommandDispatcher dispatcher;
+    private final PeerProxyService peerProxy;
     private final ExecutorService finExecutor;
     private volatile boolean running = true;
 
+    /** TTL para entradas UDP sin actividad: 60 segundos. */
+    private static final int UDP_CLIENT_TTL_SEGUNDOS = 60;
+    /** Cada cuántos segundos se corre la limpieza de clientes UDP inactivos. */
+    private static final int UDP_CLEANUP_INTERVAL_SEGUNDOS = 30;
+
     private final Map<Integer, UdpSession> sessions = new ConcurrentHashMap<>();
+    private ScheduledExecutorService cleanupScheduler;
 
     public UdpHandler(DatagramSocket socket, DocumentoService documentoService, LogService logService) {
-        this(socket, documentoService, logService, null, null, null);
+        this(socket, documentoService, logService, null, null, null, null);
     }
 
     public UdpHandler(DatagramSocket socket, DocumentoService documentoService, LogService logService,
                       ClientPool udpPool, ServerEventBus eventBus) {
-        this(socket, documentoService, logService, udpPool, eventBus, null);
+        this(socket, documentoService, logService, udpPool, eventBus, null, null);
     }
 
     public UdpHandler(DatagramSocket socket, DocumentoService documentoService, LogService logService,
                       ClientPool udpPool, ServerEventBus eventBus, CommandDispatcher dispatcher) {
+        this(socket, documentoService, logService, udpPool, eventBus, dispatcher, null);
+    }
+
+    public UdpHandler(DatagramSocket socket, DocumentoService documentoService, LogService logService,
+                      ClientPool udpPool, ServerEventBus eventBus, CommandDispatcher dispatcher,
+                      PeerProxyService peerProxy) {
         this.socket = socket;
         this.documentoService = documentoService;
         this.logService = logService;
@@ -81,6 +98,7 @@ public class UdpHandler implements Runnable {
         this.dispatcher = dispatcher != null
                 ? dispatcher
                 : new CommandDispatcher(documentoService, logService, clienteDAO, eventBus);
+        this.peerProxy = peerProxy;
         this.finExecutor = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "udp-fin-worker");
             t.setDaemon(true);
@@ -102,6 +120,22 @@ public class UdpHandler implements Runnable {
     @Override
     public void run() {
         System.out.println("[UDP] Handler iniciado en puerto " + socket.getLocalPort());
+
+        cleanupScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "udp-client-cleanup");
+            t.setDaemon(true);
+            return t;
+        });
+        cleanupScheduler.scheduleAtFixedRate(() -> {
+            try {
+                int eliminados = clienteDAO.limpiarUdpInactivos(UDP_CLIENT_TTL_SEGUNDOS);
+                if (eliminados > 0) {
+                    System.out.println("[UDP] Clientes UDP inactivos eliminados: " + eliminados);
+                }
+            } catch (Exception e) {
+                System.err.println("[UDP] Error en limpieza de clientes inactivos: " + e.getMessage());
+            }
+        }, UDP_CLEANUP_INTERVAL_SEGUNDOS, UDP_CLEANUP_INTERVAL_SEGUNDOS, TimeUnit.SECONDS);
 
         byte[] buffer = new byte[MAX_DATAGRAM_SIZE];
 
@@ -206,7 +240,7 @@ public class UdpHandler implements Runnable {
 
         String nombre = msg.getString("nombre");
         long tamano = msg.getLong("tamano");
-        UdpSession nueva = new UdpSession(nombre, tamano, clientIp, channel);
+        UdpSession nueva = new UdpSession(nombre, tamano, clientIp, channel, msg);
         UdpSession previa = sessions.putIfAbsent(sessionId, nueva);
         if (previa != null) {
             // Sesion duplicada (mismo sessionId): liberamos el slot y rechazamos.
@@ -236,6 +270,13 @@ public class UdpHandler implements Runnable {
             channel.sendMensaje(Mensaje.error("Documento no encontrado"));
             return;
         }
+        if (!documentoService.puedeAccederDocumentoLocal(docId,
+                channel.getContext().getIp(),
+                channel.getContext().getPort(),
+                channel.getContext().getProtocol())) {
+            channel.sendMensaje(Mensaje.error("Acceso denegado al documento"));
+            return;
+        }
 
         logService.logDescarga(clientIp, doc.getNombre(),
                 encriptado ? "ENCRIPTADO_UDP" : "ORIGINAL_UDP");
@@ -262,14 +303,15 @@ public class UdpHandler implements Runnable {
         }
         session.addChunk(seqNum, data);
         session.channel.sendAck(seqNum);
+        // Refrescar timestamp de actividad para evitar que el TTL expire durante transferencias largas
+        session.tocarActividad(clienteDAO);
     }
 
     private void procesarFin(int sessionId, InetAddress addr, int port) {
         UdpSession session = sessions.remove(sessionId);
         if (session == null) {
-            try {
-                new UdpClientChannel(socket, addr, port, sessionId)
-                        .sendMensaje(Mensaje.error("Sesion no encontrada"));
+            try (UdpClientChannel ch = new UdpClientChannel(socket, addr, port, sessionId)) {
+                ch.sendMensaje(Mensaje.error("Sesion no encontrada"));
             } catch (IOException ignored) {
                 // ya no se puede responder
             }
@@ -281,19 +323,65 @@ public class UdpHandler implements Runnable {
 
     private void completarSesion(int sessionId, UdpSession session) {
         try {
+            ClientContext ctx = session.channel.getContext();
+            String remitenteNombre = "";
+            DocumentoService.DocumentoEnvioParams envio = DocumentoEnvioHelper.buildLocalParams(
+                    session.envioHeader, ctx, remitenteNombre);
+            String destServidor = session.envioHeader.getString("destServidor");
+
             try (InputStream stream = session.toInputStream()) {
-                Documento doc = documentoService.procesarArchivo(
-                        session.nombre, session.tamano, session.clientIp, stream);
+                if (peerProxy != null && DocumentoEnvioHelper.esPeerRemoto(destServidor, peerProxy.getRegistry())) {
+                    if (envio.getAlcance() != Documento.EnvioAlcance.DIRIGIDO) {
+                        session.channel.sendMensaje(Mensaje.error("Relay UDP requiere envioAlcance DIRIGIDO"));
+                        return;
+                    }
+                    if (envio.getDestIp() == null || envio.getDestPuerto() == null
+                            || envio.getDestProtocolo() == null) {
+                        session.channel.sendMensaje(Mensaje.error("Destino incompleto para relay UDP"));
+                        return;
+                    }
+                    PeerInfo destPeer = peerProxy.getRegistry().getById(destServidor.trim()).orElse(null);
+                    if (destPeer == null) {
+                        session.channel.sendMensaje(Mensaje.error("Peer destino no encontrado u offline"));
+                        return;
+                    }
+                    String localId = peerProxy.getRegistry().getLocalId();
+                    String origenEtiqueta = peerProxy.getPeerClient().getSelfInfo().getNombre()
+                            + " (" + localId.substring(0, Math.min(8, localId.length())) + ")";
+                    Mensaje relay = DocumentoEnvioHelper.buildRelayArchivoHeader(
+                            session.envioHeader, session.nombre, session.tamano, ctx,
+                            remitenteNombre, origenEtiqueta, localId);
+                    Mensaje respPeer = peerProxy.relayEntregarArchivo(
+                            destServidor.trim(), relay, stream, session.tamano);
+                    if (respPeer.getComando() == Comando.ERROR) {
+                        session.channel.sendMensaje(Mensaje.error(
+                                respPeer.getString("detalle") != null
+                                        ? respPeer.getString("detalle") : "Error en peer remoto"));
+                        return;
+                    }
+                    session.channel.sendMensaje(respPeer);
+                    logService.logArchivoRecibido(session.clientIp, session.nombre + " (relay UDP)", session.tamano);
+                } else {
+                    if (envio.getAlcance() == Documento.EnvioAlcance.DIRIGIDO) {
+                        if (envio.getDestIp() == null || envio.getDestPuerto() == null
+                                || envio.getDestProtocolo() == null) {
+                            session.channel.sendMensaje(Mensaje.error("Destino incompleto para envio DIRIGIDO"));
+                            return;
+                        }
+                    }
+                    Documento doc = documentoService.procesarArchivo(
+                            session.nombre, session.tamano, session.clientIp, stream, envio);
 
-                logService.logArchivoRecibido(session.clientIp, session.nombre, session.tamano);
+                    logService.logArchivoRecibido(session.clientIp, session.nombre, session.tamano);
 
-                session.channel.sendMensaje(Mensaje.respuestaOk("hash", doc.getHashSha256())
-                        .put("documentoId", doc.getId())
-                        .put("mensaje", "Archivo recibido via UDP"));
+                    session.channel.sendMensaje(Mensaje.respuestaOk("hash", doc.getHashSha256())
+                            .put("documentoId", doc.getId())
+                            .put("mensaje", "Archivo recibido via UDP"));
+                }
 
                 if (eventBus != null) {
                     eventBus.publish(ServerEventType.UDP_SESION_FINALIZADA, session.channel.getContext(),
-                            "sessionId=" + sessionId + " docId=" + doc.getId());
+                            "sessionId=" + sessionId);
                 }
             }
         } catch (Exception e) {
@@ -334,6 +422,7 @@ public class UdpHandler implements Runnable {
     public void stop() {
         running = false;
         finExecutor.shutdown();
+        if (cleanupScheduler != null) cleanupScheduler.shutdown();
     }
 
     /**
@@ -345,17 +434,27 @@ public class UdpHandler implements Runnable {
         final long tamano;
         final String clientIp;
         final UdpClientChannel channel;
+        final Mensaje envioHeader;
         final ConcurrentHashMap<Integer, byte[]> chunks = new ConcurrentHashMap<>();
 
-        UdpSession(String nombre, long tamano, String clientIp, UdpClientChannel channel) {
+        UdpSession(String nombre, long tamano, String clientIp, UdpClientChannel channel, Mensaje envioHeader) {
             this.nombre = nombre;
             this.tamano = tamano;
             this.clientIp = clientIp;
             this.channel = channel;
+            this.envioHeader = envioHeader != null ? envioHeader : new Mensaje(Comando.ENVIAR_ARCHIVO);
         }
 
         void addChunk(int seqNum, byte[] data) {
             chunks.put(seqNum, data);
+        }
+
+        void tocarActividad(ClienteConectadoDAO dao) {
+            try {
+                dao.registrar(new ClienteConectado(
+                        channel.getContext().getIp(),
+                        channel.getContext().getPort(), "UDP"));
+            } catch (Exception ignored) { }
         }
 
         InputStream toInputStream() {

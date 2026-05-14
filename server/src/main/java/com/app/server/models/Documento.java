@@ -14,6 +14,14 @@ public class Documento {
         MENSAJE, ARCHIVO
     }
 
+    /**
+     * Alcance de visibilidad en el catalogo publico vs entrega dirigida.
+     */
+    public enum EnvioAlcance {
+        TODOS,
+        DIRIGIDO
+    }
+
     private long id;
     private String nombre;
     private String extension;
@@ -23,6 +31,16 @@ public class Documento {
     private String ipPropietario;
     private Tipo tipo;
     private LocalDateTime fechaCreacion;
+
+    private EnvioAlcance envioAlcance = EnvioAlcance.TODOS;
+    private String destIp;
+    private Integer destPuerto;
+    private String destProtocolo;
+    private String origenServidorEtiqueta;
+    private String origenPeerId;
+    private String remitenteNombre;
+    private Integer remitentePuerto;
+    private String remitenteProtocolo;
 
     public Documento() {
     }
@@ -39,7 +57,77 @@ public class Documento {
         this.fechaCreacion = LocalDateTime.now();
     }
 
-    // --- Getters y Setters ---
+    public EnvioAlcance getEnvioAlcance() {
+        return envioAlcance != null ? envioAlcance : EnvioAlcance.TODOS;
+    }
+
+    public void setEnvioAlcance(EnvioAlcance envioAlcance) {
+        this.envioAlcance = envioAlcance != null ? envioAlcance : EnvioAlcance.TODOS;
+    }
+
+    public String getDestIp() {
+        return destIp;
+    }
+
+    public void setDestIp(String destIp) {
+        this.destIp = destIp;
+    }
+
+    public Integer getDestPuerto() {
+        return destPuerto;
+    }
+
+    public void setDestPuerto(Integer destPuerto) {
+        this.destPuerto = destPuerto;
+    }
+
+    public String getDestProtocolo() {
+        return destProtocolo;
+    }
+
+    public void setDestProtocolo(String destProtocolo) {
+        this.destProtocolo = destProtocolo;
+    }
+
+    public String getOrigenServidorEtiqueta() {
+        return origenServidorEtiqueta;
+    }
+
+    public void setOrigenServidorEtiqueta(String origenServidorEtiqueta) {
+        this.origenServidorEtiqueta = origenServidorEtiqueta;
+    }
+
+    public String getOrigenPeerId() {
+        return origenPeerId;
+    }
+
+    public void setOrigenPeerId(String origenPeerId) {
+        this.origenPeerId = origenPeerId;
+    }
+
+    public String getRemitenteNombre() {
+        return remitenteNombre;
+    }
+
+    public void setRemitenteNombre(String remitenteNombre) {
+        this.remitenteNombre = remitenteNombre;
+    }
+
+    public Integer getRemitentePuerto() {
+        return remitentePuerto;
+    }
+
+    public void setRemitentePuerto(Integer remitentePuerto) {
+        this.remitentePuerto = remitentePuerto;
+    }
+
+    public String getRemitenteProtocolo() {
+        return remitenteProtocolo;
+    }
+
+    public void setRemitenteProtocolo(String remitenteProtocolo) {
+        this.remitenteProtocolo = remitenteProtocolo;
+    }
 
     public long getId() {
         return id;
