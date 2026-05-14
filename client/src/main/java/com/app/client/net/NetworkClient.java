@@ -198,6 +198,10 @@ public class NetworkClient implements Closeable {
         return enviarComandoSimple(new Mensaje(Comando.LISTAR_CLIENTES));
     }
 
+    public Mensaje setNombre(String nombre) throws IOException {
+        return enviarComandoSimple(new Mensaje(Comando.SET_NOMBRE).put("nombre", nombre));
+    }
+
     public Mensaje listarServidores() throws IOException {
         return enviarComandoSimple(new Mensaje(Comando.LISTAR_SERVIDORES));
     }

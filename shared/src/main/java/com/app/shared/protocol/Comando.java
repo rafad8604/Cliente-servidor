@@ -15,6 +15,7 @@ public enum Comando {
     LISTAR_SERVIDORES,
     OBTENER_EVENTOS,
     OBTENER_LOGS,
+    SET_NOMBRE,
 
     // Comandos servidor -> cliente
     RESPUESTA,
@@ -27,6 +28,7 @@ public enum Comando {
     PEER_BYE,
     PEER_PING,
     PEER_LISTAR_DOCS,
+    PEER_LISTAR_CLIENTES,
     PEER_DESCARGAR_ARCHIVO,
     PEER_DESCARGAR_HASH
 }

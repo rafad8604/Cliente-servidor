@@ -51,6 +51,7 @@ public class MainFrame extends JFrame {
     // Componentes de configuración
     private JTextField txtHost;
     private JTextField txtPort;
+    private JTextField txtNombre;
     private JRadioButton rbTcp;
     private JRadioButton rbUdp;
     private JButton btnConectar;
@@ -128,6 +129,7 @@ public class MainFrame extends JFrame {
         // --- Configuración ---
         txtHost = createStyledTextField("127.0.0.1", 12);
         txtPort = createStyledTextField("9000", 6);
+        txtNombre = createStyledTextField(detectarNombreLocal(), 10);
 
         rbTcp = new JRadioButton("TCP");
         rbTcp.setSelected(true);
@@ -155,7 +157,7 @@ public class MainFrame extends JFrame {
 
         // --- Tabla de clientes ---
         modelClientes = new DefaultTableModel(
-                new String[]{"IP", "Puerto", "Protocolo", "Conectado desde"}, 0) {
+                new String[]{"Nombre", "IP", "Puerto", "Protocolo", "Conectado desde", "Servidor"}, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
                 return false;
@@ -309,6 +311,8 @@ public class MainFrame extends JFrame {
         lblTitle.setForeground(TEXT_PRIMARY);
 
         panel.add(lblTitle);
+        panel.add(createLabel("Nombre:"));
+        panel.add(txtNombre);
         panel.add(createLabel("Host:"));
         panel.add(txtHost);
         panel.add(createLabel("Puerto:"));
@@ -566,10 +570,13 @@ public class MainFrame extends JFrame {
         appendChat("[SISTEMA] Conectando a " + host + ":" + port + " (" + proto + ")...", TEXT_SECONDARY);
 
         // Conectar en hilo separado para no bloquear la GUI
+        String nombreCliente = txtNombre.getText().trim().isEmpty()
+                ? detectarNombreLocal() : txtNombre.getText().trim();
+
         CompletableFuture.supplyAsync(() -> {
             try {
                 NetworkClient client = new NetworkClient(host, port, proto);
-                Mensaje sesion = client.conectar();
+                client.conectar();
 
                 client.setOnMessageReceived(msg -> {
                     SwingUtilities.invokeLater(() -> {
@@ -593,6 +600,12 @@ public class MainFrame extends JFrame {
                 appendChat("[SISTEMA] ¡Conectado exitosamente!", SUCCESS);
 
                 setInputsEnabled(false);
+
+                // Enviar nombre de forma asíncrona y no bloqueante DESPUÉS
+                // de que los refrescos iniciales hayan podido arrancar.
+                CompletableFuture.runAsync(() -> {
+                    try { client.setNombre(nombreCliente); } catch (Exception ignored) { }
+                });
 
                 // Auto-refresh
                 refrescarClientes();
@@ -779,8 +792,9 @@ public class MainFrame extends JFrame {
                 for (Map<String, Object> e : evs) {
                     String ts = String.valueOf(e.getOrDefault("timestamp", ""));
                     String hora = ts.contains("T") ? ts.substring(ts.indexOf('T') + 1).replaceAll("\\..*", "") : ts;
-                    String ref = e.get("cliente") != null ? e.get("cliente").toString()
-                            : (e.get("origen") != null ? e.get("origen").toString() : "");
+                    String ref = e.get("nombreCliente") != null ? e.get("nombreCliente").toString()
+                            : (e.get("cliente") != null ? e.get("cliente").toString()
+                            : (e.get("origen") != null ? e.get("origen").toString() : ""));
                     modelEventos.addRow(new Object[]{
                             hora,
                             e.getOrDefault("tipo", ""),
@@ -814,10 +828,13 @@ public class MainFrame extends JFrame {
                 java.lang.reflect.Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
                 List<Map<String, Object>> logs = gson.fromJson(json, (java.lang.reflect.Type) listType);
                 for (Map<String, Object> l : logs) {
+                    String clienteLog = l.get("nombreCliente") != null
+                            ? l.get("nombreCliente").toString()
+                            : l.getOrDefault("ip", "").toString();
                     modelLogs.addRow(new Object[]{
                             l.getOrDefault("fecha", ""),
                             l.getOrDefault("accion", ""),
-                            l.getOrDefault("ip", ""),
+                            clienteLog,
                             l.getOrDefault("detalle", "")
                     });
                 }
@@ -849,12 +866,15 @@ public class MainFrame extends JFrame {
                         java.lang.reflect.Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
                         List<Map<String, Object>> clientes = gson.fromJson(clientesJson, (java.lang.reflect.Type) listType);
                         for (Map<String, Object> c : clientes) {
+                            String nombreC = (String) c.getOrDefault("nombre", "");
                             modelClientes.addRow(new Object[]{
+                                    nombreC != null && !nombreC.isBlank() ? nombreC : c.get("ip"),
                                     c.get("ip"),
                                     c.get("puerto") instanceof Number ?
                                             ((Number) c.get("puerto")).intValue() : c.get("puerto"),
                                     c.get("protocolo"),
-                                    c.get("fechaInicio")
+                                    c.get("fechaInicio"),
+                                    c.getOrDefault("servidor", "local")
                             });
                         }
                     } catch (Exception e) {
@@ -895,6 +915,9 @@ public class MainFrame extends JFrame {
                             String servidor = d.get("servidor") != null ? d.get("servidor").toString() : "local";
                             String origen = d.get("origen") != null ? d.get("origen").toString() : "local";
                             String valorServidor = "remoto".equalsIgnoreCase(origen) ? servidor : "local";
+                            String propietario = d.get("nombrePropietario") != null
+                                    ? d.get("nombrePropietario").toString()
+                                    : (d.get("ip") != null ? d.get("ip").toString() : "");
                             modelDocumentos.addRow(new Object[]{
                                     id,
                                     d.get("nombre"),
@@ -902,7 +925,7 @@ public class MainFrame extends JFrame {
                                     formatSize(tamano),
                                     d.get("tipo"),
                                     d.get("hash"),
-                                    d.get("ip"),
+                                    propietario,
                                     valorServidor
                             });
                         }
@@ -1039,6 +1062,7 @@ public class MainFrame extends JFrame {
     private void setInputsEnabled(boolean enabled) {
         txtHost.setEnabled(enabled);
         txtPort.setEnabled(enabled);
+        txtNombre.setEnabled(enabled);
         rbTcp.setEnabled(enabled);
         rbUdp.setEnabled(enabled);
     }
@@ -1153,6 +1177,14 @@ public class MainFrame extends JFrame {
         g.drawString("M", 8, 24);
         g.dispose();
         return img;
+    }
+
+    private static String detectarNombreLocal() {
+        try {
+            String h = java.net.InetAddress.getLocalHost().getHostName();
+            if (h != null && !h.isBlank()) return h;
+        } catch (Exception ignored) { }
+        return System.getProperty("user.name", "cliente");
     }
 
     private String formatSize(long bytes) {

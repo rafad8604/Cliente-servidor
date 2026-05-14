@@ -118,6 +118,7 @@ public class ServerApp {
 
             PeerRegistry peerRegistry = null;
             PeerProxyService peerProxy = null;
+            PeerClient peerClient = null;
 
             if (parsed.peersEnabled) {
                 String localId = UUID.randomUUID().toString();
@@ -126,11 +127,12 @@ public class ServerApp {
                 PeerInfo selfInfo = new PeerInfo(localId, nombre, host, parsed.peerPort,
                         parsed.tcpPort, parsed.udpPort);
                 peerRegistry = new PeerRegistry(localId, eventBus);
-                PeerClient peerClient = new PeerClient(selfInfo);
+                peerClient = new PeerClient(selfInfo);
                 peerCatalog = new PeerCatalog(peerRegistry, peerClient, eventBus);
                 peerProxy = new PeerProxyService(peerRegistry, peerClient, eventBus);
 
-                peerServer = new PeerServer(parsed.peerPort, peerRegistry, documentoService, eventBus);
+                peerServer = new PeerServer(parsed.peerPort, peerRegistry, documentoService,
+                        new ClienteConectadoDAO(), eventBus);
                 peerServer.start();
 
                 discovery = new PeerDiscoveryService(peerRegistry, eventBus, selfInfo,
@@ -151,7 +153,7 @@ public class ServerApp {
                     parsed.maxClients, parsed.maxClients,
                     documentoService, logService, eventBus,
                     peerRegistry, peerCatalog, peerProxy,
-                    eventBuffer, logDAO);
+                    eventBuffer, logDAO, peerClient);
             server.start();
 
             httpGateway = new HttpGateway(parsed.httpPort, documentoService, logService,

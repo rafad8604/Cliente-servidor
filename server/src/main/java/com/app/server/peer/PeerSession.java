@@ -1,7 +1,9 @@
 package com.app.server.peer;
 
+import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
+import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.service.DocumentoService;
 import com.app.shared.protocol.Comando;
@@ -36,16 +38,19 @@ public class PeerSession implements Runnable {
     private final Socket socket;
     private final PeerRegistry registry;
     private final DocumentoService documentoService;
+    private final ClienteConectadoDAO clienteDAO;
     private final ServerEventBus eventBus;
     private String remotePeerId = "desconocido";
 
     public PeerSession(Socket socket,
                        PeerRegistry registry,
                        DocumentoService documentoService,
+                       ClienteConectadoDAO clienteDAO,
                        ServerEventBus eventBus) {
         this.socket = socket;
         this.registry = registry;
         this.documentoService = documentoService;
+        this.clienteDAO = clienteDAO;
         this.eventBus = eventBus;
     }
 
@@ -102,6 +107,23 @@ public class PeerSession implements Runnable {
             }
             case PEER_PING: {
                 enviarLinea(out, Mensaje.respuestaOk("pong", true).toJson());
+                return true;
+            }
+            case PEER_LISTAR_CLIENTES: {
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (clienteDAO != null) {
+                    for (ClienteConectado c : clienteDAO.listarTodos()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("ip", c.getIp());
+                        row.put("puerto", c.getPuerto());
+                        row.put("protocolo", c.getProtocolo());
+                        row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
+                        row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
+                        rows.add(row);
+                    }
+                }
+                enviarLinea(out, Mensaje.respuestaOk("clientes", GSON.toJson(rows))
+                        .put("total", rows.size()).toJson());
                 return true;
             }
             case PEER_LISTAR_DOCS: {

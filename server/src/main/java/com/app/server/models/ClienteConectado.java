@@ -11,6 +11,7 @@ public class ClienteConectado {
     private int puerto;
     private String protocolo; // "TCP" o "UDP"
     private LocalDateTime fechaInicio;
+    private String nombre;
 
     public ClienteConectado() {
     }
@@ -20,6 +21,7 @@ public class ClienteConectado {
         this.puerto = puerto;
         this.protocolo = protocolo;
         this.fechaInicio = LocalDateTime.now();
+        this.nombre = "";
     }
 
     // --- Getters y Setters ---
@@ -56,9 +58,18 @@ public class ClienteConectado {
         this.fechaInicio = fechaInicio;
     }
 
+    public String getNombre() {
+        return nombre;
+    }
+
+    public void setNombre(String nombre) {
+        this.nombre = nombre != null ? nombre : "";
+    }
+
     @Override
     public String toString() {
         return "ClienteConectado{ip='" + ip + "', puerto=" + puerto +
-                ", protocolo='" + protocolo + "', desde=" + fechaInicio + '}';
+                ", protocolo='" + protocolo + "', desde=" + fechaInicio +
+                (nombre != null && !nombre.isEmpty() ? ", nombre='" + nombre + "'" : "") + '}';
     }
 }

@@ -1,5 +1,6 @@
 package com.app.server.peer;
 
+import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.service.DocumentoService;
@@ -21,6 +22,7 @@ public class PeerServer {
     private final int port;
     private final PeerRegistry registry;
     private final DocumentoService documentoService;
+    private final ClienteConectadoDAO clienteDAO;
     private final ServerEventBus eventBus;
 
     private ServerSocket serverSocket;
@@ -30,10 +32,12 @@ public class PeerServer {
     public PeerServer(int port,
                       PeerRegistry registry,
                       DocumentoService documentoService,
+                      ClienteConectadoDAO clienteDAO,
                       ServerEventBus eventBus) {
         this.port = port;
         this.registry = registry;
         this.documentoService = documentoService;
+        this.clienteDAO = clienteDAO;
         this.eventBus = eventBus;
     }
 
@@ -71,7 +75,7 @@ public class PeerServer {
                     eventBus.publish(ServerEventType.PEER_CONEXION_ENTRANTE, "peer-server",
                             socket.getInetAddress().getHostAddress() + ":" + socket.getPort());
                 }
-                PeerSession session = new PeerSession(socket, registry, documentoService, eventBus);
+                PeerSession session = new PeerSession(socket, registry, documentoService, clienteDAO, eventBus);
                 Thread t = new Thread(session, "peer-session-" + socket.getInetAddress().getHostAddress());
                 t.setDaemon(true);
                 t.start();

@@ -21,14 +21,41 @@ public class ClienteConectadoDAO {
      * Registra un nuevo cliente conectado. Si ya existe, actualiza la fecha.
      */
     public void registrar(ClienteConectado cliente) throws SQLException {
-        String sql = "INSERT INTO clientes_conectados (ip, puerto, protocolo, fecha_inicio) " +
-                "VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE fecha_inicio = VALUES(fecha_inicio), protocolo = VALUES(protocolo)";
+        String sql = "INSERT INTO clientes_conectados (ip, puerto, protocolo, fecha_inicio, nombre) " +
+                "VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE fecha_inicio = VALUES(fecha_inicio), " +
+                "protocolo = VALUES(protocolo), nombre = VALUES(nombre)";
         Connection conn = dbPool.getConnection();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, cliente.getIp());
             ps.setInt(2, cliente.getPuerto());
             ps.setString(3, cliente.getProtocolo());
             ps.setTimestamp(4, Timestamp.valueOf(cliente.getFechaInicio()));
+            ps.setString(5, cliente.getNombre() != null ? cliente.getNombre() : "");
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            // Fallback si la columna 'nombre' aun no existe en el esquema
+            String sqlLegacy = "INSERT INTO clientes_conectados (ip, puerto, protocolo, fecha_inicio) " +
+                    "VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE fecha_inicio = VALUES(fecha_inicio), " +
+                    "protocolo = VALUES(protocolo)";
+            try (PreparedStatement ps = conn.prepareStatement(sqlLegacy)) {
+                ps.setString(1, cliente.getIp());
+                ps.setInt(2, cliente.getPuerto());
+                ps.setString(3, cliente.getProtocolo());
+                ps.setTimestamp(4, Timestamp.valueOf(cliente.getFechaInicio()));
+                ps.executeUpdate();
+            }
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+    }
+
+    public void actualizarNombre(String ip, int puerto, String nombre) throws SQLException {
+        String sql = "UPDATE clientes_conectados SET nombre = ? WHERE ip = ? AND puerto = ?";
+        Connection conn = dbPool.getConnection();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, nombre != null ? nombre : "");
+            ps.setString(2, ip);
+            ps.setInt(3, puerto);
             ps.executeUpdate();
         } finally {
             dbPool.releaseConnection(conn);
@@ -65,6 +92,7 @@ public class ClienteConectadoDAO {
                 c.setPuerto(rs.getInt("puerto"));
                 c.setProtocolo(rs.getString("protocolo"));
                 c.setFechaInicio(rs.getTimestamp("fecha_inicio").toLocalDateTime());
+                try { c.setNombre(rs.getString("nombre")); } catch (Exception ignored) { }
                 clientes.add(c);
             }
         } finally {
