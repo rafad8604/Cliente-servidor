@@ -316,10 +316,38 @@ public class CommandDispatcher {
                         String clienteStr = ev.getClientContext() != null
                                 ? ev.getClientContext().toString() : null;
                         row.put("cliente", clienteStr);
+                        if (ev.getClientContext() != null) {
+                            row.put("clienteIp", ev.getClientContext().getIp());
+                            row.put("clientePuerto", ev.getClientContext().getPort());
+                            row.put("clienteProtocolo", ev.getClientContext().getProtocol());
+                        }
                         if (nameCache != null && ev.getClientContext() != null) {
                             row.put("nombreCliente", nameCache.getOrIp(ev.getClientContext().getIp()));
                         }
+                        row.put("servidor", "Local");
                         rows.add(row);
+                    }
+                }
+                if (peerRegistry != null && peerClient != null) {
+                    Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
+                    for (PeerInfo peer : peerRegistry.listarOnline()) {
+                        String label = peer.getNombre() + " (" + peer.getId().substring(0, 8) + ")";
+                        try {
+                            Mensaje resp = peerClient.obtenerEventos(peer, limit);
+                            if (resp.getComando() == Comando.RESPUESTA) {
+                                String json = resp.getString("eventos");
+                                if (json != null && !json.isBlank()) {
+                                    List<Map<String, Object>> peerRows = GSON.fromJson(json, listType);
+                                    for (Map<String, Object> row : peerRows) {
+                                        row.put("servidor", label);
+                                        row.put("peerId", peer.getId());
+                                        rows.add(row);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            // peer no disponible, se omite
+                        }
                     }
                 }
                 channel.sendMensaje(Mensaje.respuestaOk("eventos", GSON.toJson(rows))
@@ -338,7 +366,30 @@ public class CommandDispatcher {
                         if (nameCache != null) row.put("nombreCliente", nameCache.getOrIp(l.getIpOrigen()));
                         row.put("fecha", l.getFechaHora() != null ? l.getFechaHora().toString() : null);
                         row.put("detalle", l.getDetalles());
+                        row.put("servidor", "Local");
                         rows.add(row);
+                    }
+                }
+                if (peerRegistry != null && peerClient != null) {
+                    Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
+                    for (PeerInfo peer : peerRegistry.listarOnline()) {
+                        String label = peer.getNombre() + " (" + peer.getId().substring(0, 8) + ")";
+                        try {
+                            Mensaje resp = peerClient.obtenerLogs(peer, limit);
+                            if (resp.getComando() == Comando.RESPUESTA) {
+                                String json = resp.getString("logs");
+                                if (json != null && !json.isBlank()) {
+                                    List<Map<String, Object>> peerRows = GSON.fromJson(json, listType);
+                                    for (Map<String, Object> row : peerRows) {
+                                        row.put("servidor", label);
+                                        row.put("peerId", peer.getId());
+                                        rows.add(row);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            // peer no disponible, se omite
+                        }
                     }
                 }
                 channel.sendMensaje(Mensaje.respuestaOk("logs", GSON.toJson(rows))
