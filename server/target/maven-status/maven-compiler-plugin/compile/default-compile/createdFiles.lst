@@ -28,6 +28,7 @@ com/app/server/peer/PeerProxyService.class
 com/app/server/ServerApp$Args.class
 com/app/server/net/UdpHandler$UdpSession.class
 com/app/server/net/TcpClientChannel.class
+com/app/server/net/ClientNameCache.class
 com/app/server/events/ServerEventListener.class
 com/app/server/http/HttpGateway.class
 com/app/server/dao/DocumentoDAO$LazyChunkInputStream.class

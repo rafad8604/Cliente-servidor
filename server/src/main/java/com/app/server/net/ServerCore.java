@@ -42,6 +42,7 @@ public class ServerCore {
     private final PeerClient peerClient;
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
+    private final ClientNameCache nameCache = new ClientNameCache();
 
     private ServerSocket tcpServer;
     private DatagramSocket udpSocket;
@@ -138,7 +139,7 @@ public class ServerCore {
     private CommandDispatcher nuevoDispatcher() {
         return new CommandDispatcher(
                 documentoService, logService, new ClienteConectadoDAO(), eventBus,
-                peerRegistry, peerCatalog, eventBuffer, logDAO, peerClient);
+                peerRegistry, peerCatalog, eventBuffer, logDAO, peerClient, nameCache);
     }
 
     private void runTcp() {

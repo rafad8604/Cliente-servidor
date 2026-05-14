@@ -118,6 +118,7 @@ public class PeerSession implements Runnable {
                         row.put("puerto", c.getPuerto());
                         row.put("protocolo", c.getProtocolo());
                         row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
+                        row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
                         rows.add(row);
                     }
                 }

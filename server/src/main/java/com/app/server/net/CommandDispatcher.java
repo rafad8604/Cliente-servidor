@@ -50,12 +50,13 @@ public class CommandDispatcher {
     private final PeerClient peerClient;
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
+    private final ClientNameCache nameCache;
 
     public CommandDispatcher(DocumentoService documentoService,
                              LogService logService,
                              ClienteConectadoDAO clienteDAO,
                              ServerEventBus eventBus) {
-        this(documentoService, logService, clienteDAO, eventBus, null, null, null, null, null);
+        this(documentoService, logService, clienteDAO, eventBus, null, null, null, null, null, null);
     }
 
     public CommandDispatcher(DocumentoService documentoService,
@@ -64,7 +65,7 @@ public class CommandDispatcher {
                              ServerEventBus eventBus,
                              PeerRegistry peerRegistry,
                              PeerCatalog peerCatalog) {
-        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, null, null, null);
+        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, null, null, null, null);
     }
 
     public CommandDispatcher(DocumentoService documentoService,
@@ -75,7 +76,7 @@ public class CommandDispatcher {
                              PeerCatalog peerCatalog,
                              InMemoryEventBuffer eventBuffer,
                              LogDAO logDAO) {
-        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, eventBuffer, logDAO, null);
+        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, eventBuffer, logDAO, null, null);
     }
 
     public CommandDispatcher(DocumentoService documentoService,
@@ -87,6 +88,19 @@ public class CommandDispatcher {
                              InMemoryEventBuffer eventBuffer,
                              LogDAO logDAO,
                              PeerClient peerClient) {
+        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, eventBuffer, logDAO, peerClient, null);
+    }
+
+    public CommandDispatcher(DocumentoService documentoService,
+                             LogService logService,
+                             ClienteConectadoDAO clienteDAO,
+                             ServerEventBus eventBus,
+                             PeerRegistry peerRegistry,
+                             PeerCatalog peerCatalog,
+                             InMemoryEventBuffer eventBuffer,
+                             LogDAO logDAO,
+                             PeerClient peerClient,
+                             ClientNameCache nameCache) {
         this.documentoService = documentoService;
         this.logService = logService;
         this.clienteDAO = clienteDAO;
@@ -96,6 +110,7 @@ public class CommandDispatcher {
         this.peerClient = peerClient;
         this.eventBuffer = eventBuffer;
         this.logDAO = logDAO;
+        this.nameCache = nameCache;
     }
 
     /**
@@ -132,7 +147,9 @@ public class CommandDispatcher {
             case LISTAR_DOCUMENTOS: {
                 List<Map<String, Object>> rows = new ArrayList<>();
                 for (Documento d : documentoService.listarDocumentos()) {
-                    rows.add(documentoToRow(d, "local", null));
+                    Map<String, Object> row = documentoToRow(d, "local", null);
+                    if (nameCache != null) row.put("nombrePropietario", nameCache.getOrIp(d.getIpPropietario()));
+                    rows.add(row);
                 }
                 if (peerCatalog != null) {
                     for (PeerCatalog.RemoteDocumento rd : peerCatalog.listarRemotos()) {
@@ -143,6 +160,23 @@ public class CommandDispatcher {
                         .put("total", rows.size()));
                 return true;
             }
+            case SET_NOMBRE: {
+                String nombre = msg.getString("nombre");
+                if (nombre == null || nombre.isBlank()) {
+                    channel.sendMensaje(Mensaje.error("Parametro 'nombre' requerido"));
+                    return true;
+                }
+                String nombreTrimmed = nombre.trim();
+                try {
+                    clienteDAO.actualizarNombre(channel.getContext().getIp(),
+                            channel.getContext().getPort(), nombreTrimmed);
+                } catch (Exception e) {
+                    // no bloquear si falla la BD
+                }
+                if (nameCache != null) nameCache.set(channel.getContext().getIp(), nombreTrimmed);
+                channel.sendMensaje(Mensaje.respuestaOk("nombre", nombreTrimmed));
+                return true;
+            }
             case LISTAR_CLIENTES: {
                 List<Map<String, Object>> rows = new ArrayList<>();
                 for (ClienteConectado c : clienteDAO.listarTodos()) {
@@ -151,6 +185,7 @@ public class CommandDispatcher {
                     row.put("puerto", c.getPuerto());
                     row.put("protocolo", c.getProtocolo());
                     row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
+                    row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
                     row.put("servidor", "local");
                     rows.add(row);
                 }
@@ -208,8 +243,12 @@ public class CommandDispatcher {
                         row.put("tipo", ev.getTipo().name());
                         row.put("origen", ev.getOrigen());
                         row.put("detalle", ev.getDetalle());
-                        row.put("cliente", ev.getClientContext() != null
-                                ? ev.getClientContext().toString() : null);
+                        String clienteStr = ev.getClientContext() != null
+                                ? ev.getClientContext().toString() : null;
+                        row.put("cliente", clienteStr);
+                        if (nameCache != null && ev.getClientContext() != null) {
+                            row.put("nombreCliente", nameCache.getOrIp(ev.getClientContext().getIp()));
+                        }
                         rows.add(row);
                     }
                 }
@@ -226,6 +265,7 @@ public class CommandDispatcher {
                         row.put("id", l.getId());
                         row.put("accion", l.getAccion());
                         row.put("ip", l.getIpOrigen());
+                        if (nameCache != null) row.put("nombreCliente", nameCache.getOrIp(l.getIpOrigen()));
                         row.put("fecha", l.getFechaHora() != null ? l.getFechaHora().toString() : null);
                         row.put("detalle", l.getDetalles());
                         rows.add(row);

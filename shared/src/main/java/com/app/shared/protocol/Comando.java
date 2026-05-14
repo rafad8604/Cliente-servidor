@@ -15,6 +15,7 @@ public enum Comando {
     LISTAR_SERVIDORES,
     OBTENER_EVENTOS,
     OBTENER_LOGS,
+    SET_NOMBRE,
 
     // Comandos servidor -> cliente
     RESPUESTA,

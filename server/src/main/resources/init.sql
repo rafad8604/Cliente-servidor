@@ -59,3 +59,6 @@ CREATE TABLE IF NOT EXISTS documentos_chunks (
 -- Migración idempotente para BDs existentes (MySQL 8.0.29+)
 ALTER TABLE documentos_chunks
     ADD COLUMN IF NOT EXISTS codificacion VARCHAR(16) NOT NULL DEFAULT 'RAW';
+
+ALTER TABLE clientes_conectados
+    ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) NOT NULL DEFAULT '';

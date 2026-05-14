@@ -17,6 +17,7 @@
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/net/ClientChannel.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/net/ClientContext.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/net/ClientHandler.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/net/ClientNameCache.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/net/ClientPool.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/net/CommandDispatcher.java
 /Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/server/src/main/java/com/app/server/net/ServerCore.java
