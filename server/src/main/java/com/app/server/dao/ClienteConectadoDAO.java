@@ -113,4 +113,24 @@ public class ClienteConectadoDAO {
             dbPool.releaseConnection(conn);
         }
     }
+
+    /**
+     * Elimina entradas UDP cuya ultima actividad supera el TTL indicado.
+     * Se usa porque UDP no tiene cierre de conexión explícito.
+     *
+     * @param ttlSegundos segundos sin actividad para considerar al cliente desconectado
+     * @return número de filas eliminadas
+     */
+    public int limpiarUdpInactivos(int ttlSegundos) throws SQLException {
+        String sql = "DELETE FROM clientes_conectados " +
+                "WHERE protocolo = 'UDP' " +
+                "AND fecha_inicio < DATE_SUB(NOW(), INTERVAL ? SECOND)";
+        Connection conn = dbPool.getConnection();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, ttlSegundos);
+            return ps.executeUpdate();
+        } finally {
+            dbPool.releaseConnection(conn);
+        }
+    }
 }

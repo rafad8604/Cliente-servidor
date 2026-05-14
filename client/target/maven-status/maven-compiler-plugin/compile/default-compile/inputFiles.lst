@@ -1,8 +1,8 @@
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\ClientApp.java
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\dao\H2Connection.java
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\dao\HistorialDAO.java
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\gui\MainFrame.java
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\models\HistorialDocumento.java
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\net\ClientDiscoveryService.java
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\net\DiscoveredServer.java
-D:\p2p\Cliente-servidor\client\src\main\java\com\app\client\net\NetworkClient.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/ClientApp.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/dao/H2Connection.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/dao/HistorialDAO.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/gui/MainFrame.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/models/HistorialDocumento.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/net/ClientDiscoveryService.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/net/DiscoveredServer.java
+/Users/luisperez/Documents/Universidad/Pregrado/Software 2/Cliente-servidor/client/src/main/java/com/app/client/net/NetworkClient.java

@@ -1,10 +1,14 @@
 package com.app.server.peer;
 
 import com.app.server.dao.ClienteConectadoDAO;
+import com.app.server.dao.LogDAO;
+import com.app.server.events.InMemoryEventBuffer;
+import com.app.server.events.ServerEvent;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
+import com.app.server.models.Log;
 import com.app.server.net.BoundedInputStream;
 import com.app.server.net.DocumentoEnvioHelper;
 import com.app.server.service.DocumentoService;
@@ -42,6 +46,9 @@ public class PeerSession implements Runnable {
     private final DocumentoService documentoService;
     private final ClienteConectadoDAO clienteDAO;
     private final ServerEventBus eventBus;
+    private final InMemoryEventBuffer eventBuffer;
+    private final LogDAO logDAO;
+    private final String selfLabel;
     private String remotePeerId = "desconocido";
 
     public PeerSession(Socket socket,
@@ -49,11 +56,35 @@ public class PeerSession implements Runnable {
                        DocumentoService documentoService,
                        ClienteConectadoDAO clienteDAO,
                        ServerEventBus eventBus) {
+        this(socket, registry, documentoService, clienteDAO, eventBus, null, null, null);
+    }
+
+    public PeerSession(Socket socket,
+                       PeerRegistry registry,
+                       DocumentoService documentoService,
+                       ClienteConectadoDAO clienteDAO,
+                       ServerEventBus eventBus,
+                       InMemoryEventBuffer eventBuffer,
+                       LogDAO logDAO) {
+        this(socket, registry, documentoService, clienteDAO, eventBus, eventBuffer, logDAO, null);
+    }
+
+    public PeerSession(Socket socket,
+                       PeerRegistry registry,
+                       DocumentoService documentoService,
+                       ClienteConectadoDAO clienteDAO,
+                       ServerEventBus eventBus,
+                       InMemoryEventBuffer eventBuffer,
+                       LogDAO logDAO,
+                       String selfLabel) {
         this.socket = socket;
         this.registry = registry;
         this.documentoService = documentoService;
         this.clienteDAO = clienteDAO;
         this.eventBus = eventBus;
+        this.eventBuffer = eventBuffer;
+        this.logDAO = logDAO;
+        this.selfLabel = selfLabel != null ? selfLabel : "servidor";
     }
 
     @Override
@@ -121,7 +152,7 @@ public class PeerSession implements Runnable {
                         row.put("protocolo", c.getProtocolo());
                         row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
                         row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
-                        row.put("servidor", "local");
+                        row.put("servidor", selfLabel);
                         row.put("peerId", registry.getLocalId());
                         rows.add(row);
                     }
@@ -222,6 +253,47 @@ public class PeerSession implements Runnable {
                 } catch (Exception e) {
                     enviarLinea(out, Mensaje.error("Relay archivo: " + e.getMessage()).toJson());
                 }
+                return true;
+            }
+            case PEER_OBTENER_LOGS: {
+                int limit = msg.getDatos().containsKey("limit") ? msg.getInt("limit") : 50;
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (logDAO != null) {
+                    for (Log l : logDAO.listarUltimos(limit)) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("id", l.getId());
+                        row.put("accion", l.getAccion());
+                        row.put("ip", l.getIpOrigen());
+                        row.put("fecha", l.getFechaHora() != null ? l.getFechaHora().toString() : null);
+                        row.put("detalle", l.getDetalles());
+                        rows.add(row);
+                    }
+                }
+                enviarLinea(out, Mensaje.respuestaOk("logs", GSON.toJson(rows))
+                        .put("total", rows.size()).toJson());
+                return true;
+            }
+            case PEER_OBTENER_EVENTOS: {
+                int limit = msg.getDatos().containsKey("limit") ? msg.getInt("limit") : 100;
+                List<Map<String, Object>> rows = new ArrayList<>();
+                if (eventBuffer != null) {
+                    for (ServerEvent ev : eventBuffer.snapshot(limit)) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("timestamp", ev.getTimestamp().toString());
+                        row.put("tipo", ev.getTipo().name());
+                        row.put("origen", ev.getOrigen());
+                        row.put("detalle", ev.getDetalle());
+                        if (ev.getClientContext() != null) {
+                            row.put("cliente", ev.getClientContext().toString());
+                            row.put("clienteIp", ev.getClientContext().getIp());
+                            row.put("clientePuerto", ev.getClientContext().getPort());
+                            row.put("clienteProtocolo", ev.getClientContext().getProtocol());
+                        }
+                        rows.add(row);
+                    }
+                }
+                enviarLinea(out, Mensaje.respuestaOk("eventos", GSON.toJson(rows))
+                        .put("total", rows.size()).toJson());
                 return true;
             }
             default:

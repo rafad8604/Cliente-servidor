@@ -226,7 +226,7 @@ public class MainFrame extends JFrame {
 
         // --- Tabla de eventos del servidor (en vivo) ---
         modelEventos = new DefaultTableModel(
-                new String[]{"Hora", "Tipo", "Origen / Cliente", "Detalle"}, 0) {
+                new String[]{"Hora", "Servidor", "Tipo", "Origen / Cliente", "Puerto", "Protocolo", "Detalle"}, 0) {
             @Override
             public boolean isCellEditable(int row, int col) { return false; }
         };
@@ -234,7 +234,7 @@ public class MainFrame extends JFrame {
 
         // --- Tabla de logs (BD) ---
         modelLogs = new DefaultTableModel(
-                new String[]{"Fecha", "Accion", "IP", "Detalle"}, 0) {
+                new String[]{"Fecha", "Servidor", "Accion", "Cliente", "Detalle"}, 0) {
             @Override
             public boolean isCellEditable(int row, int col) { return false; }
         };
@@ -936,10 +936,16 @@ public class MainFrame extends JFrame {
                     String ref = e.get("nombreCliente") != null ? e.get("nombreCliente").toString()
                             : (e.get("cliente") != null ? e.get("cliente").toString()
                             : (e.get("origen") != null ? e.get("origen").toString() : ""));
+                    String servidor = e.getOrDefault("servidor", "Local").toString();
+                    String puerto = e.get("clientePuerto") != null ? e.get("clientePuerto").toString() : "";
+                    String protocolo = e.get("clienteProtocolo") != null ? e.get("clienteProtocolo").toString() : "";
                     modelEventos.addRow(new Object[]{
                             hora,
+                            servidor,
                             e.getOrDefault("tipo", ""),
                             ref,
+                            puerto,
+                            protocolo,
                             e.getOrDefault("detalle", "")
                     });
                 }
@@ -972,8 +978,10 @@ public class MainFrame extends JFrame {
                     String clienteLog = l.get("nombreCliente") != null
                             ? l.get("nombreCliente").toString()
                             : l.getOrDefault("ip", "").toString();
+                    String servidor = l.getOrDefault("servidor", "Local").toString();
                     modelLogs.addRow(new Object[]{
                             l.getOrDefault("fecha", ""),
+                            servidor,
                             l.getOrDefault("accion", ""),
                             clienteLog,
                             l.getOrDefault("detalle", "")

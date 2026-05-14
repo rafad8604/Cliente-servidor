@@ -27,8 +27,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Servidor UDP.
@@ -62,7 +64,13 @@ public class UdpHandler implements Runnable {
     private final ExecutorService finExecutor;
     private volatile boolean running = true;
 
+    /** TTL para entradas UDP sin actividad: 60 segundos. */
+    private static final int UDP_CLIENT_TTL_SEGUNDOS = 60;
+    /** Cada cuántos segundos se corre la limpieza de clientes UDP inactivos. */
+    private static final int UDP_CLEANUP_INTERVAL_SEGUNDOS = 30;
+
     private final Map<Integer, UdpSession> sessions = new ConcurrentHashMap<>();
+    private ScheduledExecutorService cleanupScheduler;
 
     public UdpHandler(DatagramSocket socket, DocumentoService documentoService, LogService logService) {
         this(socket, documentoService, logService, null, null, null, null);
@@ -112,6 +120,22 @@ public class UdpHandler implements Runnable {
     @Override
     public void run() {
         System.out.println("[UDP] Handler iniciado en puerto " + socket.getLocalPort());
+
+        cleanupScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "udp-client-cleanup");
+            t.setDaemon(true);
+            return t;
+        });
+        cleanupScheduler.scheduleAtFixedRate(() -> {
+            try {
+                int eliminados = clienteDAO.limpiarUdpInactivos(UDP_CLIENT_TTL_SEGUNDOS);
+                if (eliminados > 0) {
+                    System.out.println("[UDP] Clientes UDP inactivos eliminados: " + eliminados);
+                }
+            } catch (Exception e) {
+                System.err.println("[UDP] Error en limpieza de clientes inactivos: " + e.getMessage());
+            }
+        }, UDP_CLEANUP_INTERVAL_SEGUNDOS, UDP_CLEANUP_INTERVAL_SEGUNDOS, TimeUnit.SECONDS);
 
         byte[] buffer = new byte[MAX_DATAGRAM_SIZE];
 
@@ -279,6 +303,8 @@ public class UdpHandler implements Runnable {
         }
         session.addChunk(seqNum, data);
         session.channel.sendAck(seqNum);
+        // Refrescar timestamp de actividad para evitar que el TTL expire durante transferencias largas
+        session.tocarActividad(clienteDAO);
     }
 
     private void procesarFin(int sessionId, InetAddress addr, int port) {
@@ -396,6 +422,7 @@ public class UdpHandler implements Runnable {
     public void stop() {
         running = false;
         finExecutor.shutdown();
+        if (cleanupScheduler != null) cleanupScheduler.shutdown();
     }
 
     /**
@@ -420,6 +447,14 @@ public class UdpHandler implements Runnable {
 
         void addChunk(int seqNum, byte[] data) {
             chunks.put(seqNum, data);
+        }
+
+        void tocarActividad(ClienteConectadoDAO dao) {
+            try {
+                dao.registrar(new ClienteConectado(
+                        channel.getContext().getIp(),
+                        channel.getContext().getPort(), "UDP"));
+            } catch (Exception ignored) { }
         }
 
         InputStream toInputStream() {
