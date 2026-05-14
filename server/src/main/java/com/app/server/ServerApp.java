@@ -132,8 +132,9 @@ public class ServerApp {
                 peerProxy = new PeerProxyService(peerRegistry, peerClient, eventBus);
 
                 LogDAO peerLogDAO = new LogDAO();
+                String selfLabel = nombre + " (" + host + ")";
                 peerServer = new PeerServer(parsed.peerPort, peerRegistry, documentoService,
-                        new ClienteConectadoDAO(), eventBus, eventBuffer, peerLogDAO);
+                        new ClienteConectadoDAO(), eventBus, eventBuffer, peerLogDAO, selfLabel);
                 peerServer.start();
 
                 discovery = new PeerDiscoveryService(peerRegistry, eventBus, selfInfo,

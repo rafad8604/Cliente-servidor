@@ -48,6 +48,7 @@ public class PeerSession implements Runnable {
     private final ServerEventBus eventBus;
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
+    private final String selfLabel;
     private String remotePeerId = "desconocido";
 
     public PeerSession(Socket socket,
@@ -55,7 +56,7 @@ public class PeerSession implements Runnable {
                        DocumentoService documentoService,
                        ClienteConectadoDAO clienteDAO,
                        ServerEventBus eventBus) {
-        this(socket, registry, documentoService, clienteDAO, eventBus, null, null);
+        this(socket, registry, documentoService, clienteDAO, eventBus, null, null, null);
     }
 
     public PeerSession(Socket socket,
@@ -65,6 +66,17 @@ public class PeerSession implements Runnable {
                        ServerEventBus eventBus,
                        InMemoryEventBuffer eventBuffer,
                        LogDAO logDAO) {
+        this(socket, registry, documentoService, clienteDAO, eventBus, eventBuffer, logDAO, null);
+    }
+
+    public PeerSession(Socket socket,
+                       PeerRegistry registry,
+                       DocumentoService documentoService,
+                       ClienteConectadoDAO clienteDAO,
+                       ServerEventBus eventBus,
+                       InMemoryEventBuffer eventBuffer,
+                       LogDAO logDAO,
+                       String selfLabel) {
         this.socket = socket;
         this.registry = registry;
         this.documentoService = documentoService;
@@ -72,6 +84,7 @@ public class PeerSession implements Runnable {
         this.eventBus = eventBus;
         this.eventBuffer = eventBuffer;
         this.logDAO = logDAO;
+        this.selfLabel = selfLabel != null ? selfLabel : "servidor";
     }
 
     @Override
@@ -139,7 +152,7 @@ public class PeerSession implements Runnable {
                         row.put("protocolo", c.getProtocolo());
                         row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
                         row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
-                        row.put("servidor", "local");
+                        row.put("servidor", selfLabel);
                         row.put("peerId", registry.getLocalId());
                         rows.add(row);
                     }

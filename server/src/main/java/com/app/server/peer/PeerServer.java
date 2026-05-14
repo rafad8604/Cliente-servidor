@@ -28,6 +28,7 @@ public class PeerServer {
     private final ServerEventBus eventBus;
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
+    private final String selfLabel;
 
     private ServerSocket serverSocket;
     private Thread acceptThread;
@@ -38,7 +39,7 @@ public class PeerServer {
                       DocumentoService documentoService,
                       ClienteConectadoDAO clienteDAO,
                       ServerEventBus eventBus) {
-        this(port, registry, documentoService, clienteDAO, eventBus, null, null);
+        this(port, registry, documentoService, clienteDAO, eventBus, null, null, null);
     }
 
     public PeerServer(int port,
@@ -48,6 +49,17 @@ public class PeerServer {
                       ServerEventBus eventBus,
                       InMemoryEventBuffer eventBuffer,
                       LogDAO logDAO) {
+        this(port, registry, documentoService, clienteDAO, eventBus, eventBuffer, logDAO, null);
+    }
+
+    public PeerServer(int port,
+                      PeerRegistry registry,
+                      DocumentoService documentoService,
+                      ClienteConectadoDAO clienteDAO,
+                      ServerEventBus eventBus,
+                      InMemoryEventBuffer eventBuffer,
+                      LogDAO logDAO,
+                      String selfLabel) {
         this.port = port;
         this.registry = registry;
         this.documentoService = documentoService;
@@ -55,6 +67,7 @@ public class PeerServer {
         this.eventBus = eventBus;
         this.eventBuffer = eventBuffer;
         this.logDAO = logDAO;
+        this.selfLabel = selfLabel;
     }
 
     public synchronized void start() throws IOException {
@@ -91,7 +104,7 @@ public class PeerServer {
                     eventBus.publish(ServerEventType.PEER_CONEXION_ENTRANTE, "peer-server",
                             socket.getInetAddress().getHostAddress() + ":" + socket.getPort());
                 }
-                PeerSession session = new PeerSession(socket, registry, documentoService, clienteDAO, eventBus, eventBuffer, logDAO);
+                PeerSession session = new PeerSession(socket, registry, documentoService, clienteDAO, eventBus, eventBuffer, logDAO, selfLabel);
                 Thread t = new Thread(session, "peer-session-" + socket.getInetAddress().getHostAddress());
                 t.setDaemon(true);
                 t.start();

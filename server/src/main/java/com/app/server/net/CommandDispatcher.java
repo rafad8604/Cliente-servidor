@@ -53,6 +53,7 @@ public class CommandDispatcher {
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
     private final ClientNameCache nameCache;
+    private final String selfLabel;
 
     public CommandDispatcher(DocumentoService documentoService,
                              LogService logService,
@@ -113,6 +114,21 @@ public class CommandDispatcher {
         this.eventBuffer = eventBuffer;
         this.logDAO = logDAO;
         this.nameCache = nameCache;
+        this.selfLabel = buildSelfLabel(peerClient);
+    }
+
+    private static String buildSelfLabel(PeerClient peerClient) {
+        if (peerClient != null && peerClient.getSelfInfo() != null) {
+            return peerClient.getSelfInfo().getNombre()
+                    + " (" + peerClient.getSelfInfo().getHost() + ")";
+        }
+        try {
+            String host = java.net.InetAddress.getLocalHost().getHostAddress();
+            String name = java.net.InetAddress.getLocalHost().getHostName();
+            return name + " (" + host + ")";
+        } catch (Exception e) {
+            return "este-servidor";
+        }
     }
 
     /**
@@ -200,7 +216,7 @@ public class CommandDispatcher {
             case LISTAR_DOCUMENTOS: {
                 List<Map<String, Object>> rows = new ArrayList<>();
                 for (Documento d : documentoService.listarDocumentosPublicos()) {
-                    Map<String, Object> row = documentoToRow(d, "local", null);
+                    Map<String, Object> row = documentoToRow(d, selfLabel, null);
                     if (nameCache != null) row.put("nombrePropietario", nameCache.getOrIp(d.getIpPropietario()));
                     rows.add(row);
                 }
@@ -250,7 +266,7 @@ public class CommandDispatcher {
                     row.put("protocolo", c.getProtocolo());
                     row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
                     row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
-                    row.put("servidor", "local");
+                    row.put("servidor", selfLabel);
                     if (peerRegistry != null) {
                         row.put("peerId", peerRegistry.getLocalId());
                     } else {
@@ -267,7 +283,7 @@ public class CommandDispatcher {
                                 String json = resp.getString("clientes");
                                 if (json != null && !json.isBlank()) {
                                     List<Map<String, Object>> peerRows = GSON.fromJson(json, listType);
-                                    String label = peer.getNombre() + " (" + peer.getId().substring(0, 8) + ")";
+                                    String label = peer.getNombre() + " (" + peer.getHost() + ")";
                                     for (Map<String, Object> row : peerRows) {
                                         row.put("servidor", label);
                                         row.put("peerId", peer.getId());
@@ -324,14 +340,14 @@ public class CommandDispatcher {
                         if (nameCache != null && ev.getClientContext() != null) {
                             row.put("nombreCliente", nameCache.getOrIp(ev.getClientContext().getIp()));
                         }
-                        row.put("servidor", "Local");
+                        row.put("servidor", selfLabel);
                         rows.add(row);
                     }
                 }
                 if (peerRegistry != null && peerClient != null) {
                     Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
                     for (PeerInfo peer : peerRegistry.listarOnline()) {
-                        String label = peer.getNombre() + " (" + peer.getId().substring(0, 8) + ")";
+                        String label = peer.getNombre() + " (" + peer.getHost() + ")";
                         try {
                             Mensaje resp = peerClient.obtenerEventos(peer, limit);
                             if (resp.getComando() == Comando.RESPUESTA) {
@@ -366,14 +382,14 @@ public class CommandDispatcher {
                         if (nameCache != null) row.put("nombreCliente", nameCache.getOrIp(l.getIpOrigen()));
                         row.put("fecha", l.getFechaHora() != null ? l.getFechaHora().toString() : null);
                         row.put("detalle", l.getDetalles());
-                        row.put("servidor", "Local");
+                        row.put("servidor", selfLabel);
                         rows.add(row);
                     }
                 }
                 if (peerRegistry != null && peerClient != null) {
                     Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
                     for (PeerInfo peer : peerRegistry.listarOnline()) {
-                        String label = peer.getNombre() + " (" + peer.getId().substring(0, 8) + ")";
+                        String label = peer.getNombre() + " (" + peer.getHost() + ")";
                         try {
                             Mensaje resp = peerClient.obtenerLogs(peer, limit);
                             if (resp.getComando() == Comando.RESPUESTA) {
@@ -452,10 +468,10 @@ public class CommandDispatcher {
         }
         row.put("origenServidorEtiqueta",
                 d.getOrigenServidorEtiqueta() != null && !d.getOrigenServidorEtiqueta().isBlank()
-                        ? d.getOrigenServidorEtiqueta() : "local");
+                        ? d.getOrigenServidorEtiqueta() : selfLabel);
         row.put("fecha", d.getFechaCreacion() != null ? d.getFechaCreacion().toString() : null);
-        row.put("origen", "local");
-        row.put("servidor", "local");
+        row.put("origen", selfLabel);
+        row.put("servidor", selfLabel);
         return row;
     }
 
@@ -470,7 +486,7 @@ public class CommandDispatcher {
         row.put("ip", d.getIpPropietario());
         row.put("fecha", d.getFechaCreacion() != null ? d.getFechaCreacion().toString() : null);
         row.put("origen", origen);
-        row.put("servidor", peerId == null ? "local" : peerId);
+        row.put("servidor", peerId == null ? selfLabel : peerId);
         return row;
     }
 
