@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ComandoTest {
 
     @Test
-    void contieneComandosEsperados() {
+    void contieneComandosClienteServidor() {
         Set<String> nombres = Arrays.stream(Comando.values())
                 .map(Enum::name)
                 .collect(Collectors.toSet());
@@ -23,11 +23,26 @@ class ComandoTest {
         assertTrue(nombres.contains("DESCARGAR_HASH"));
         assertTrue(nombres.contains("DESCARGAR_ENCRIPTADO"));
         assertTrue(nombres.contains("LISTAR_CLIENTES"));
+        assertTrue(nombres.contains("LISTAR_SERVIDORES"));
+        assertTrue(nombres.contains("OBTENER_EVENTOS"));
+        assertTrue(nombres.contains("OBTENER_LOGS"));
         assertTrue(nombres.contains("RESPUESTA"));
         assertTrue(nombres.contains("ERROR"));
         assertTrue(nombres.contains("CHAT_MENSAJE"));
         assertTrue(nombres.contains("SESION_INFO"));
+    }
 
-        assertEquals(11, nombres.size());
+    @Test
+    void contieneComandosPeer() {
+        Set<String> nombres = Arrays.stream(Comando.values())
+                .map(Enum::name)
+                .collect(Collectors.toSet());
+
+        assertTrue(nombres.contains("PEER_HELLO"));
+        assertTrue(nombres.contains("PEER_BYE"));
+        assertTrue(nombres.contains("PEER_PING"));
+        assertTrue(nombres.contains("PEER_LISTAR_DOCS"));
+        assertTrue(nombres.contains("PEER_DESCARGAR_ARCHIVO"));
+        assertTrue(nombres.contains("PEER_DESCARGAR_HASH"));
     }
 }

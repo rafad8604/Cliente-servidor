@@ -66,11 +66,13 @@ public class TcpClientChannel implements ClientChannel {
      */
     public void sendChunkedBlock(byte[] data, int length) throws IOException {
         synchronized (writeLock) {
-            DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+            OutputStream out = socket.getOutputStream();
+            DataOutputStream dos = new DataOutputStream(out);
             dos.writeInt(length);
             if (length > 0) {
                 dos.write(data, 0, length);
             }
+            dos.flush();
         }
     }
 

@@ -5,6 +5,8 @@ import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
+import com.app.server.peer.PeerClient;
+import com.app.server.peer.PeerProxyService;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
 import com.app.shared.protocol.Comando;
@@ -15,14 +17,11 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Maneja una conexión TCP individual.
+ * Maneja una conexion TCP individual.
  *
- * Tras el refactor:
- *   - Usa {@link TcpClientChannel} (abstracción) para enviar respuestas.
- *   - Usa {@link CommandDispatcher} para comandos "simples" (sin stream).
- *   - Publica eventos en el {@link ServerEventBus}.
- *   - Sólo mantiene lógica específica de TCP para comandos con stream
- *     (ENVIAR_ARCHIVO / DESCARGAR_ARCHIVO / DESCARGAR_ENCRIPTADO).
+ * <p>Cuando el cliente solicita un archivo cuyo {@code servidor} es un peer
+ * remoto, el handler hace proxy via {@link PeerProxyService}: descarga del
+ * peer y reenvia al cliente como si fuera local.</p>
  */
 public class ClientHandler implements Runnable, Closeable {
 
@@ -33,28 +32,37 @@ public class ClientHandler implements Runnable, Closeable {
     private final ClienteConectadoDAO clienteDAO;
     private final CommandDispatcher dispatcher;
     private final ServerEventBus eventBus;
+    private final PeerProxyService peerProxy;
     private final ClientContext ctx;
     private volatile boolean running = true;
 
-    /**
-     * Constructor principal (usado por {@link ServerCore}).
-     */
     public ClientHandler(TcpClientChannel channel, ClientPool pool,
                          DocumentoService documentoService, LogService logService,
                          ServerEventBus eventBus) {
+        this(channel, pool, documentoService, logService, eventBus, null, null);
+    }
+
+    public ClientHandler(TcpClientChannel channel, ClientPool pool,
+                         DocumentoService documentoService, LogService logService,
+                         ServerEventBus eventBus,
+                         CommandDispatcher dispatcher,
+                         PeerProxyService peerProxy) {
         this.channel = channel;
         this.pool = pool;
         this.documentoService = documentoService;
         this.logService = logService;
         this.clienteDAO = new ClienteConectadoDAO();
         this.eventBus = eventBus;
-        this.dispatcher = new CommandDispatcher(documentoService, logService, clienteDAO, eventBus);
+        this.peerProxy = peerProxy;
+        this.dispatcher = dispatcher != null
+                ? dispatcher
+                : new CommandDispatcher(documentoService, logService, clienteDAO, eventBus);
         this.ctx = channel.getContext();
     }
 
     /**
      * Constructor de compatibilidad (Socket directo). Mantiene la firma usada
-     * por los tests existentes y crea internamente el adapter.
+     * por los tests existentes.
      */
     public ClientHandler(Socket socket, ClientPool pool,
                          DocumentoService documentoService, LogService logService) {
@@ -71,7 +79,7 @@ public class ClientHandler implements Runnable, Closeable {
 
             Mensaje sesion = new Mensaje(Comando.SESION_INFO)
                     .put("status", "CONECTADO")
-                    .put("mensaje", "Conectado al servidor de mensajería");
+                    .put("mensaje", "Conectado al servidor de mensajeria");
             channel.sendMensaje(sesion);
 
             InputStream socketIn = channel.inputStream();
@@ -79,7 +87,6 @@ public class ClientHandler implements Runnable, Closeable {
             while (running && channel.isOpen()) {
                 String line = leerLinea(socketIn);
                 if (line == null) break;
-
                 line = line.trim();
                 if (line.isEmpty()) continue;
 
@@ -92,7 +99,6 @@ public class ClientHandler implements Runnable, Closeable {
                     channel.sendMensaje(Mensaje.error("Error procesando comando: " + e.getMessage()));
                 }
             }
-
         } catch (IOException e) {
             if (running) {
                 System.err.println("[HANDLER] Error I/O con " + ctx + ": " + e.getMessage());
@@ -101,7 +107,6 @@ public class ClientHandler implements Runnable, Closeable {
         } catch (Exception e) {
             System.err.println("[HANDLER] Error inesperado: " + e.getMessage());
             if (eventBus != null) eventBus.publishError("tcp-handler", e, ctx);
-            e.printStackTrace();
         } finally {
             cleanup();
         }
@@ -109,9 +114,12 @@ public class ClientHandler implements Runnable, Closeable {
 
     private void procesarComando(Mensaje msg, InputStream socketIn) throws Exception {
         Comando cmd = msg.getComando();
+        if (cmd == null) {
+            channel.sendMensaje(Mensaje.error("Comando ausente"));
+            return;
+        }
         System.out.println("[HANDLER] Comando recibido de " + ctx.getIp() + ": " + cmd);
 
-        // Primero comandos específicos de TCP (con stream)
         switch (cmd) {
             case ENVIAR_ARCHIVO:
                 procesarEnviarArchivo(msg, socketIn);
@@ -126,7 +134,6 @@ public class ClientHandler implements Runnable, Closeable {
                 break;
         }
 
-        // Luego delega en el dispatcher compartido
         if (!dispatcher.dispatchSimple(channel, msg)) {
             channel.sendMensaje(Mensaje.error("Comando no reconocido: " + cmd));
         }
@@ -150,15 +157,20 @@ public class ClientHandler implements Runnable, Closeable {
 
     private void procesarDescargarArchivo(Mensaje msg) throws Exception {
         long docId = msg.getLong("documentoId");
+        String servidor = msg.getString("servidor");
+
+        if (esRemoto(servidor)) {
+            descargarProxy(docId, servidor);
+            return;
+        }
+
         Documento doc = documentoService.obtenerDocumento(docId);
         if (doc == null) {
             channel.sendMensaje(Mensaje.error("Documento no encontrado: " + docId));
             return;
         }
-
         if (logService != null) logService.logDescarga(ctx.getIp(), doc.getNombre(), "ORIGINAL");
 
-        InputStream stream = documentoService.getArchivoOriginalStream(docId);
         long tamanoReal = doc.getTamano();
         if (doc.getRutaLocalOriginal() != null) {
             File f = new File(doc.getRutaLocalOriginal());
@@ -171,20 +183,26 @@ public class ClientHandler implements Runnable, Closeable {
                 .put("hash", doc.getHashSha256())
                 .put("tipoDescarga", "ORIGINAL"));
 
-        enviarStream(stream, tamanoReal);
+        try (InputStream stream = documentoService.getArchivoOriginalStream(docId)) {
+            enviarStream(stream, tamanoReal);
+        }
     }
 
     private void procesarDescargarEncriptado(Mensaje msg) throws Exception {
         long docId = msg.getLong("documentoId");
+        String servidor = msg.getString("servidor");
+        if (esRemoto(servidor)) {
+            // Para version encriptada remota: no soportado por ahora (requeriria
+            // forwardear cipher entre servidores con misma clave). Devolvemos error claro.
+            channel.sendMensaje(Mensaje.error("Descarga encriptada de peers remotos no soportada"));
+            return;
+        }
         Documento doc = documentoService.obtenerDocumento(docId);
         if (doc == null) {
             channel.sendMensaje(Mensaje.error("Documento no encontrado: " + docId));
             return;
         }
-
         if (logService != null) logService.logDescarga(ctx.getIp(), doc.getNombre(), "ENCRIPTADO");
-
-        InputStream stream = documentoService.getArchivoEncriptadoStream(docId);
 
         channel.sendMensaje(Mensaje.respuestaOk()
                 .put("nombre", doc.getNombre() + ".enc")
@@ -192,44 +210,75 @@ public class ClientHandler implements Runnable, Closeable {
                 .put("hash", doc.getHashSha256())
                 .put("tipoDescarga", "ENCRIPTADO"));
 
-        enviarStreamConFin(stream);
+        try (InputStream stream = documentoService.getArchivoEncriptadoStream(docId)) {
+            enviarStreamConFin(stream);
+        }
+    }
+
+    private void descargarProxy(long docId, String peerId) throws Exception {
+        if (peerProxy == null) {
+            channel.sendMensaje(Mensaje.error("Proxy a peers no disponible en este servidor"));
+            return;
+        }
+        try (PeerClient.PeerDownload download = peerProxy.descargar(peerId, docId)) {
+            channel.sendMensaje(Mensaje.respuestaOk()
+                    .put("nombre", download.getNombre())
+                    .put("tamano", download.getTamano())
+                    .put("hash", download.getHash())
+                    .put("tipoDescarga", "ORIGINAL")
+                    .put("origen", "remoto")
+                    .put("servidor", peerId));
+
+            byte[] buffer = new byte[8192];
+            long remaining = download.getTamano();
+            long total = 0;
+            InputStream src = download.getStream();
+            while (remaining > 0) {
+                int toRead = (int) Math.min(buffer.length, remaining);
+                int n = src.read(buffer, 0, toRead);
+                if (n == -1) break;
+                channel.sendBytes(buffer, 0, n);
+                total += n;
+                remaining -= n;
+            }
+            channel.flush();
+            if (logService != null) {
+                logService.logDescarga(ctx.getIp(),
+                        download.getNombre() + " @peer=" + peerId.substring(0, Math.min(8, peerId.length())),
+                        "ORIGINAL_PROXY");
+            }
+            if (total != download.getTamano()) {
+                throw new IOException("Proxy incompleto: enviados=" + total + " esperado=" + download.getTamano());
+            }
+        }
+    }
+
+    private boolean esRemoto(String servidor) {
+        return servidor != null && !servidor.isBlank() && !"local".equalsIgnoreCase(servidor);
     }
 
     private void enviarStream(InputStream stream, long expectedSize) throws IOException {
         byte[] buffer = new byte[8192];
         int bytesRead;
         long totalSent = 0;
-        try {
-            while ((bytesRead = stream.read(buffer)) != -1) {
-                channel.sendBytes(buffer, 0, bytesRead);
-                totalSent += bytesRead;
-            }
-            channel.flush();
-            if (expectedSize >= 0 && totalSent != expectedSize) {
-                throw new IOException("Transferencia incompleta: enviados=" + totalSent + " esperado=" + expectedSize);
-            }
-            System.out.println("[HANDLER] Stream enviado: " + totalSent + " bytes");
-        } finally {
-            stream.close();
+        while ((bytesRead = stream.read(buffer)) != -1) {
+            channel.sendBytes(buffer, 0, bytesRead);
+            totalSent += bytesRead;
+        }
+        channel.flush();
+        if (expectedSize >= 0 && totalSent != expectedSize) {
+            throw new IOException("Transferencia incompleta: enviados=" + totalSent + " esperado=" + expectedSize);
         }
     }
 
     private void enviarStreamConFin(InputStream stream) throws IOException {
         byte[] buffer = new byte[8192];
         int bytesRead;
-        long totalSent = 0;
-        try {
-            while ((bytesRead = stream.read(buffer)) != -1) {
-                channel.sendChunkedBlock(buffer, bytesRead);
-                totalSent += bytesRead;
-            }
-            // Marcador de fin
-            channel.sendChunkedBlock(new byte[0], 0);
-            channel.flush();
-            System.out.println("[HANDLER] Stream encriptado enviado: " + totalSent + " bytes");
-        } finally {
-            stream.close();
+        while ((bytesRead = stream.read(buffer)) != -1) {
+            channel.sendChunkedBlock(buffer, bytesRead);
         }
+        channel.sendChunkedBlock(new byte[0], 0);
+        channel.flush();
     }
 
     private void cleanup() {
@@ -259,9 +308,7 @@ public class ClientHandler implements Runnable, Closeable {
         while (true) {
             int b = input.read();
             if (b == -1) {
-                if (lineBuffer.size() == 0) {
-                    return null;
-                }
+                if (lineBuffer.size() == 0) return null;
                 break;
             }
             if (b == '\n') break;
@@ -271,8 +318,7 @@ public class ClientHandler implements Runnable, Closeable {
     }
 
     /**
-     * InputStream que limita la lectura a un número específico de bytes.
-     * Evita que el handler lea más allá del archivo en el stream compartido.
+     * InputStream que limita la lectura a un numero especifico de bytes.
      */
     static class BoundedInputStream extends InputStream {
         private final InputStream in;

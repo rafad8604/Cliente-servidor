@@ -2,6 +2,8 @@ package com.app.client.gui;
 
 import com.app.client.dao.HistorialDAO;
 import com.app.client.models.HistorialDocumento;
+import com.app.client.net.ClientDiscoveryService;
+import com.app.client.net.DiscoveredServer;
 import com.app.client.net.NetworkClient;
 import com.app.shared.protocol.Comando;
 import com.app.shared.protocol.Mensaje;
@@ -62,6 +64,21 @@ public class MainFrame extends JFrame {
     private DefaultTableModel modelDocumentos;
     private JTable tblDocumentos;
 
+    // Componentes de servidores descubiertos
+    private DefaultTableModel modelServidores;
+    private JTable tblServidores;
+
+    // Componentes de eventos del servidor
+    private DefaultTableModel modelEventos;
+    private JTable tblEventos;
+
+    // Componentes de logs (BD)
+    private DefaultTableModel modelLogs;
+    private JTable tblLogs;
+
+    // Descubrimiento de servidores por broadcast UDP
+    private ClientDiscoveryService discoveryService;
+
     // Componentes de chat
     private JTextArea txtChat;
     private JTextField txtMensaje;
@@ -82,12 +99,29 @@ public class MainFrame extends JFrame {
         setupLayout();
         setupEvents();
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-        setSize(1100, 750);
-        setMinimumSize(new Dimension(900, 600));
+        setSize(1200, 800);
+        setMinimumSize(new Dimension(950, 650));
         setLocationRelativeTo(null);
-
-        // Icono de la ventana (usar un carácter emoji como placeholder)
         setIconImage(createAppIcon());
+        iniciarDiscovery();
+    }
+
+    private void iniciarDiscovery() {
+        try {
+            discoveryService = new ClientDiscoveryService();
+            discoveryService.start();
+            System.out.println("[GUI] Cliente Swing escuchando descubrimiento UDP (puerto "
+                    + ClientDiscoveryService.DISCOVERY_PORT + ")");
+            // Refresca la tabla cada 3 s (Timer de Swing -> EDT, seguro para UI).
+            Timer t = new Timer(3000, e -> refrescarServidores());
+            t.setRepeats(true);
+            t.start();
+            // Primer refresh inmediato para no mostrar la tabla vacia
+            // hasta el primer tick de 3 s.
+            refrescarServidores();
+        } catch (Exception e) {
+            System.err.println("[GUI] No se pudo iniciar descubrimiento: " + e.getMessage());
+        }
     }
 
     private void initComponents() {
@@ -107,6 +141,8 @@ public class MainFrame extends JFrame {
         rbUdp.setBackground(BG_PANEL);
         rbUdp.setFont(FONT_NORMAL);
         rbUdp.setFocusPainted(false);
+        rbUdp.addActionListener(e -> ajustarPuertoPorProtocolo());
+        rbTcp.addActionListener(e -> ajustarPuertoPorProtocolo());
 
         ButtonGroup bg = new ButtonGroup();
         bg.add(rbTcp);
@@ -129,13 +165,47 @@ public class MainFrame extends JFrame {
 
         // --- Tabla de documentos ---
         modelDocumentos = new DefaultTableModel(
-                new String[]{"ID", "Nombre", "Extensión", "Tamaño", "Tipo", "Hash SHA-256", "IP Origen"}, 0) {
+                new String[]{"ID", "Nombre", "Extensión", "Tamaño", "Tipo", "Hash SHA-256", "IP Origen", "Servidor"}, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
                 return false;
             }
         };
         tblDocumentos = createStyledTable(modelDocumentos);
+        DefaultTableCellRenderer shortIdRenderer = new DefaultTableCellRenderer() {
+            @Override
+            protected void setValue(Object value) {
+                if (value == null) { setText(""); return; }
+                String s = value.toString();
+                setText(s.length() > 8 && !"local".equalsIgnoreCase(s) ? s.substring(0, 8) : s);
+            }
+        };
+        shortIdRenderer.setHorizontalAlignment(SwingConstants.CENTER);
+        tblDocumentos.getColumnModel().getColumn(7).setCellRenderer(shortIdRenderer);
+
+        // --- Tabla de servidores online (descubrimiento UDP broadcast) ---
+        modelServidores = new DefaultTableModel(
+                new String[]{"Nombre", "Host", "TCP", "UDP", "Peer", "ID", "Ultima senal"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int col) { return false; }
+        };
+        tblServidores = createStyledTable(modelServidores);
+
+        // --- Tabla de eventos del servidor (en vivo) ---
+        modelEventos = new DefaultTableModel(
+                new String[]{"Hora", "Tipo", "Origen / Cliente", "Detalle"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int col) { return false; }
+        };
+        tblEventos = createStyledTable(modelEventos);
+
+        // --- Tabla de logs (BD) ---
+        modelLogs = new DefaultTableModel(
+                new String[]{"Fecha", "Accion", "IP", "Detalle"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int col) { return false; }
+        };
+        tblLogs = createStyledTable(modelLogs);
 
         // --- Chat ---
         txtChat = new JTextArea();
@@ -201,21 +271,19 @@ public class MainFrame extends JFrame {
         // Lado izquierdo: Chat
         JPanel panelChat = createChatPanel();
 
-        // Lado derecho: Clientes + Documentos (vertical split)
-        JSplitPane rightSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-        rightSplit.setBackground(BG_DARK);
-        rightSplit.setBorder(null);
-        rightSplit.setDividerLocation(220);
-        rightSplit.setDividerSize(3);
-
-        JPanel panelClientes = createClientesPanel();
-        JPanel panelDocumentos = createDocumentosPanel();
-
-        rightSplit.setTopComponent(panelClientes);
-        rightSplit.setBottomComponent(panelDocumentos);
+        // Lado derecho: tabs (Servidores | Clientes | Documentos | Eventos | Logs)
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.setBackground(BG_PANEL);
+        tabs.setForeground(TEXT_PRIMARY);
+        tabs.setFont(FONT_NORMAL);
+        tabs.addTab("Servidores", createServidoresPanel());
+        tabs.addTab("Clientes", createClientesPanel());
+        tabs.addTab("Documentos", createDocumentosPanel());
+        tabs.addTab("Eventos", createEventosPanel());
+        tabs.addTab("Logs (BD)", createLogsPanel());
 
         mainSplit.setLeftComponent(panelChat);
-        mainSplit.setRightComponent(rightSplit);
+        mainSplit.setRightComponent(tabs);
 
         // === Panel Inferior: Barra de progreso ===
         JPanel panelFooter = new JPanel(new BorderLayout(8, 0));
@@ -364,6 +432,86 @@ public class MainFrame extends JFrame {
         return panel;
     }
 
+    private JPanel createServidoresPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 0));
+        panel.setBackground(BG_PANEL);
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 4, 8, 8));
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(BG_PANEL);
+        JLabel lbl = new JLabel("Servidores online (LAN)");
+        lbl.setFont(FONT_TITLE);
+        lbl.setForeground(TEXT_PRIMARY);
+
+        JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        btns.setBackground(BG_PANEL);
+        JButton btnRefresh = createStyledButton("Refrescar", ACCENT);
+        JButton btnUsar = createStyledButton("Usar seleccionado", SUCCESS);
+        btnRefresh.addActionListener(e -> refrescarServidores());
+        btnUsar.addActionListener(e -> usarServidorSeleccionado());
+        btns.add(btnRefresh);
+        btns.add(btnUsar);
+
+        header.add(lbl, BorderLayout.WEST);
+        header.add(btns, BorderLayout.EAST);
+
+        JScrollPane scroll = new JScrollPane(tblServidores);
+        scroll.setBorder(createRoundedBorder());
+        styleScrollBar(scroll);
+
+        panel.add(header, BorderLayout.NORTH);
+        panel.add(scroll, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel createEventosPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 0));
+        panel.setBackground(BG_PANEL);
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 4, 8, 8));
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(BG_PANEL);
+        JLabel lbl = new JLabel("Eventos del servidor");
+        lbl.setFont(FONT_TITLE);
+        lbl.setForeground(TEXT_PRIMARY);
+        JButton btn = createStyledButton("Refrescar", ACCENT);
+        btn.addActionListener(e -> refrescarEventos());
+        header.add(lbl, BorderLayout.WEST);
+        header.add(btn, BorderLayout.EAST);
+
+        JScrollPane scroll = new JScrollPane(tblEventos);
+        scroll.setBorder(createRoundedBorder());
+        styleScrollBar(scroll);
+
+        panel.add(header, BorderLayout.NORTH);
+        panel.add(scroll, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel createLogsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 0));
+        panel.setBackground(BG_PANEL);
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 4, 8, 8));
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(BG_PANEL);
+        JLabel lbl = new JLabel("Logs persistidos (BD)");
+        lbl.setFont(FONT_TITLE);
+        lbl.setForeground(TEXT_PRIMARY);
+        JButton btn = createStyledButton("Refrescar", ACCENT);
+        btn.addActionListener(e -> refrescarLogs());
+        header.add(lbl, BorderLayout.WEST);
+        header.add(btn, BorderLayout.EAST);
+
+        JScrollPane scroll = new JScrollPane(tblLogs);
+        scroll.setBorder(createRoundedBorder());
+        styleScrollBar(scroll);
+
+        panel.add(header, BorderLayout.NORTH);
+        panel.add(scroll, BorderLayout.CENTER);
+        return panel;
+    }
+
     private void setupEvents() {
         btnConectar.addActionListener(e -> toggleConexion());
 
@@ -377,6 +525,7 @@ public class MainFrame extends JFrame {
             @Override
             public void windowClosing(WindowEvent e) {
                 desconectar();
+                if (discoveryService != null) discoveryService.stop();
             }
         });
     }
@@ -388,6 +537,15 @@ public class MainFrame extends JFrame {
             desconectar();
         } else {
             conectar();
+        }
+    }
+
+    private void ajustarPuertoPorProtocolo() {
+        String port = txtPort.getText().trim();
+        if (rbUdp.isSelected() && "9000".equals(port)) {
+            txtPort.setText("9001");
+        } else if (rbTcp.isSelected() && "9001".equals(port)) {
+            txtPort.setText("9000");
         }
     }
 
@@ -566,6 +724,112 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private void refrescarServidores() {
+        // El Timer de Swing ya ejecuta en el EDT, pero protegemos por si el
+        // metodo se llama desde otro hilo en el futuro.
+        Runnable update = () -> {
+            if (discoveryService == null) return;
+            List<DiscoveredServer> online = discoveryService.servidoresOnline();
+            modelServidores.setRowCount(0);
+            for (DiscoveredServer s : online) {
+                modelServidores.addRow(new Object[]{
+                        s.getNombre(), s.getHost(), s.getPuertoTcp(),
+                        s.getPuertoUdp(), s.getPuertoPeer(),
+                        s.shortId(),
+                        s.getUltimaSenal().toString()
+                });
+            }
+        };
+        if (SwingUtilities.isEventDispatchThread()) update.run();
+        else SwingUtilities.invokeLater(update);
+    }
+
+    private void usarServidorSeleccionado() {
+        int row = tblServidores.getSelectedRow();
+        if (row == -1) {
+            showError("Selecciona un servidor de la tabla");
+            return;
+        }
+        String nombre = modelServidores.getValueAt(row, 0).toString();
+        String host = modelServidores.getValueAt(row, 1).toString();
+        int puertoTcp = ((Number) modelServidores.getValueAt(row, 2)).intValue();
+        int puertoUdp = ((Number) modelServidores.getValueAt(row, 3)).intValue();
+        txtHost.setText(host);
+        txtPort.setText(String.valueOf(rbTcp.isSelected() ? puertoTcp : puertoUdp));
+        appendChat("[SISTEMA] Servidor '" + nombre + "' (" + host + ") cargado en el formulario. Pulsa 'Conectar'.",
+                TEXT_SECONDARY);
+    }
+
+    private void refrescarEventos() {
+        if (networkClient == null || !networkClient.isConnected()) {
+            showError("Conectate primero a un servidor");
+            return;
+        }
+        CompletableFuture.supplyAsync(() -> {
+            try { return networkClient.obtenerEventos(100); }
+            catch (Exception e) { throw new RuntimeException(e); }
+        }).thenAccept(resp -> SwingUtilities.invokeLater(() -> {
+            modelEventos.setRowCount(0);
+            String json = resp.getString("eventos");
+            if (json == null) return;
+            try {
+                Gson gson = new Gson();
+                java.lang.reflect.Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
+                List<Map<String, Object>> evs = gson.fromJson(json, (java.lang.reflect.Type) listType);
+                for (Map<String, Object> e : evs) {
+                    String ts = String.valueOf(e.getOrDefault("timestamp", ""));
+                    String hora = ts.contains("T") ? ts.substring(ts.indexOf('T') + 1).replaceAll("\\..*", "") : ts;
+                    String ref = e.get("cliente") != null ? e.get("cliente").toString()
+                            : (e.get("origen") != null ? e.get("origen").toString() : "");
+                    modelEventos.addRow(new Object[]{
+                            hora,
+                            e.getOrDefault("tipo", ""),
+                            ref,
+                            e.getOrDefault("detalle", "")
+                    });
+                }
+            } catch (Exception e) {
+                appendChat("[ERROR] Parseando eventos: " + e.getMessage(), ERROR_COLOR);
+            }
+        })).exceptionally(ex -> {
+            SwingUtilities.invokeLater(() -> appendChat("[ERROR] " + ex.getCause().getMessage(), ERROR_COLOR));
+            return null;
+        });
+    }
+
+    private void refrescarLogs() {
+        if (networkClient == null || !networkClient.isConnected()) {
+            showError("Conectate primero a un servidor");
+            return;
+        }
+        CompletableFuture.supplyAsync(() -> {
+            try { return networkClient.obtenerLogs(100); }
+            catch (Exception e) { throw new RuntimeException(e); }
+        }).thenAccept(resp -> SwingUtilities.invokeLater(() -> {
+            modelLogs.setRowCount(0);
+            String json = resp.getString("logs");
+            if (json == null) return;
+            try {
+                Gson gson = new Gson();
+                java.lang.reflect.Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
+                List<Map<String, Object>> logs = gson.fromJson(json, (java.lang.reflect.Type) listType);
+                for (Map<String, Object> l : logs) {
+                    modelLogs.addRow(new Object[]{
+                            l.getOrDefault("fecha", ""),
+                            l.getOrDefault("accion", ""),
+                            l.getOrDefault("ip", ""),
+                            l.getOrDefault("detalle", "")
+                    });
+                }
+            } catch (Exception e) {
+                appendChat("[ERROR] Parseando logs: " + e.getMessage(), ERROR_COLOR);
+            }
+        })).exceptionally(ex -> {
+            SwingUtilities.invokeLater(() -> appendChat("[ERROR] " + ex.getCause().getMessage(), ERROR_COLOR));
+            return null;
+        });
+    }
+
     private void refrescarClientes() {
         if (networkClient == null || !networkClient.isConnected()) return;
 
@@ -628,6 +892,9 @@ public class MainFrame extends JFrame {
                                     ((Number) d.get("tamano")).longValue() : 0;
                             long id = d.get("id") instanceof Number ?
                                     ((Number) d.get("id")).longValue() : 0;
+                            String servidor = d.get("servidor") != null ? d.get("servidor").toString() : "local";
+                            String origen = d.get("origen") != null ? d.get("origen").toString() : "local";
+                            String valorServidor = "remoto".equalsIgnoreCase(origen) ? servidor : "local";
                             modelDocumentos.addRow(new Object[]{
                                     id,
                                     d.get("nombre"),
@@ -635,7 +902,8 @@ public class MainFrame extends JFrame {
                                     formatSize(tamano),
                                     d.get("tipo"),
                                     d.get("hash"),
-                                    d.get("ip")
+                                    d.get("ip"),
+                                    valorServidor
                             });
                         }
                     } catch (Exception e) {
@@ -665,6 +933,10 @@ public class MainFrame extends JFrame {
         Object idObj = modelDocumentos.getValueAt(row, 0);
         long docId = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
         String nombre = modelDocumentos.getValueAt(row, 1).toString();
+        Object servObj = modelDocumentos.getValueAt(row, 7);
+        String servidor = servObj == null ? null : servObj.toString();
+        if (servidor != null && servidor.equalsIgnoreCase("local")) servidor = null;
+        final String servidorFinal = servidor;
 
         if ("HASH".equals(tipo)) {
             // Solo mostrar el hash
@@ -708,7 +980,7 @@ public class MainFrame extends JFrame {
         CompletableFuture.runAsync(() -> {
             try {
                 if ("ORIGINAL".equals(tipo)) {
-                    networkClient.descargarArchivo(docId, destino, bytesRecibidos -> {
+                    networkClient.descargarArchivo(docId, servidorFinal, destino, bytesRecibidos -> {
                         SwingUtilities.invokeLater(() -> {
                             lblProgress.setText(formatSize(bytesRecibidos) + " recibidos");
                         });

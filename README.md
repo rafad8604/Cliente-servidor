@@ -1,207 +1,321 @@
-# Sistema Cliente-Servidor de Mensajería y Archivos
+# Sistema P2P de Mensajería y Archivos
 
-Proyecto Java multi-módulo para mensajería y transferencia de archivos con soporte de protocolos **TCP**, **UDP** e **HTTP**.
+Proyecto Java multi-módulo. Varios servidores se descubren entre sí por UDP broadcast en la LAN, comparten su catálogo de documentos y un cliente conectado a cualquier servidor puede listar y descargar archivos de los demás. El cliente también descubre servidores por broadcast (no necesita IP de antemano).
 
-## Características
+## Escenario típico
 
-- Envío de mensajes y archivos vía **TCP**, **UDP** o **HTTP**
-- Cliente con GUI (Swing + FlatLaf) - soporta TCP y UDP
-- Panel web HTTP para acceso desde navegador
-- Servidor con almacenamiento de metadatos y logs en MySQL
-- Cifrado AES-256 y hash SHA-256 para todos los archivos
-- Historial local del cliente con H2
-- Log por sesión de ejecución del servidor (archivo nuevo por cada arranque)
-- 65+ test cases para validación de funcionalidad
+```
+LAN
+├── PC1  servidor + cliente
+├── PC2  cliente   (se conecta a cualquier servidor que ve)
+├── PC3  servidor + cliente
+└── PC4  servidor + cliente
+```
 
-## Arquitectura del proyecto
+- Los **servidores** se anuncian cada 5 s por UDP broadcast (`9200`). Cualquier nodo que escucha ese puerto los detecta.
+- Los **clientes** también escuchan ese broadcast → pestaña *"Servidores"* del GUI muestra la lista en vivo (`nombre · host · puertoTCP · puertoUDP`). Botón *"Usar seleccionado"* rellena el formulario.
+- Cada cliente se conecta a **un** servidor (TCP o UDP). Al listar documentos ve los locales + los publicados por peers (proxy automático al descargar).
 
-- `shared`: contrato/protocolo y utilidades compartidas entre cliente y servidor.
-  - `Comando`, `Mensaje`
-  - `CryptoUtil` - AES-256 y SHA-256
-- `server`: núcleo del servidor, handlers TCP/UDP, gateway HTTP, servicios y DAOs MySQL.
-- `client`: aplicación de escritorio con GUI y cliente de red (TCP/UDP).
-- `storage`: almacenamiento local usado por el proyecto (logs, archivos temporales).
+## Arquitectura
 
-## Protocolos soportados
+```
+┌──────────┐         ┌─────────────┐                      ┌─────────────┐
+│ Cliente  │  TCP/   │  Servidor A │   TCP peer-to-peer   │  Servidor B │
+│ (Swing)  │◀──UDP──▶│             │◀────────────────────▶│             │
+│          │  9000/  │  TCP 9000   │   puerto 9100        │             │
+│  o HTTP  │  9001/  │  UDP 9001   │   discovery UDP 9200 │             │
+│          │  8080   │  HTTP 8080  │   (broadcast)        │             │
+└──────────┘         └──────┬──────┘                      └──────┬──────┘
+                            │                                    │
+                       MySQL :33306                          MySQL :33306
+                       (BD local A)                          (BD local B)
+```
 
-### TCP (Puerto 9000)
-- Conexión persistente
-- Cliente: Selecciona en GUI → "TCP"
-- Registra cliente automáticamente al conectar
-- Ideal para: sesiones largas, transferencias confiables
+- **`shared/`** — `Comando`, `Mensaje` (Gson JSON línea-delimitado), `CryptoUtil` (AES-256, SHA-256, PBKDF2).
+- **`server/`**
+  - `net/` — TCP (`ServerCore`, `ClientHandler`, `TcpClientChannel`) y UDP (`UdpHandler`, `UdpClientChannel`) con fragmentación automática de mensajes grandes.
+  - `peer/` — `PeerDiscoveryService` (broadcast UDP), `PeerRegistry` (TTL), `PeerServer/PeerSession` (TCP entre servidores), `PeerClient`, `PeerCatalog` (caché TTL de docs remotos), `PeerProxyService` (proxy de descarga).
+  - `service/` — `DocumentoService` (cifrado, hash, chunks 50 MB), `LogService`.
+  - `dao/` — JDBC con pool de 10 conexiones.
+  - `http/` — `HttpGateway` (REST + UI estática).
+  - `events/` — bus de eventos asíncrono + consola formateada + `InMemoryEventBuffer` (últimos 500).
+- **`client/`** — `NetworkClient` (TCP/UDP, reensamblaje de fragmentos), `ClientDiscoveryService` (escucha broadcast UDP `9200`), GUI Swing + FlatLaf con pestañas, H2 local para historial.
 
-### UDP (Puerto 9001)
-- Datagrama sin conexión
-- Cliente: Selecciona en GUI → "UDP"
-- Registra cliente automáticamente al enviar primer comando
-- Nota: cliente calcula puerto como `9000 + 1 = 9001`
-- Ideal para: baja latencia, tolerancia a pérdida de paquetes
+## Cómo funcionan los datos (BD + catálogo)
 
-### HTTP (Puerto 8080)
-- Con sesión HTTP explícita (`/api/connect` y `/api/disconnect`)
-- Acceso: navegador web → `http://localhost:8080`
-- Registra cliente al conectarse y lo elimina al desconectarse
-- Ideal para: acceso web, monitoreo y operaciones desde navegador con estado de sesión
+**Cada servidor tiene su propia MySQL local independiente.** No hay BD compartida, no se replica nada. Se comparte solo **metadata** entre servidores; los **bytes** del archivo viajan únicamente al momento de descargar (proxy).
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ Servidor A (PC1)                  Servidor B (PC3)             │
+│                                                                │
+│  ┌────────────────┐                 ┌────────────────┐         │
+│  │ MySQL local A  │                 │ MySQL local B  │         │
+│  │ documentos     │                 │ documentos     │         │
+│  │ chunks (AES)   │                 │ chunks (AES)   │         │
+│  │ logs, clientes │                 │ logs, clientes │         │
+│  └───────▲────────┘                 └───────▲────────┘         │
+│          │                                  │                  │
+│          │ lectura local                    │                  │
+│          │                                  │                  │
+│  ┌───────┴────────┐  PEER_LISTAR_DOCS       ┌────────┴───────┐ │
+│  │ PeerCatalog A  │◀────────cada 10s───────▶│ PeerCatalog B  │ │
+│  │ (cache TTL 30s)│  (solo metadata JSON)   │ (cache TTL 30s)│ │
+│  │ • docs de B    │                         │ • docs de A    │ │
+│  └────────────────┘                         └────────────────┘ │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Qué guarda cada nodo
+
+| Cosa                          | Dónde vive                       | Quién la tiene                       |
+|-------------------------------|----------------------------------|--------------------------------------|
+| Bytes del archivo (cifrados)  | tabla `documentos_chunks` MySQL  | **solo el servidor donde se subió**  |
+| Metadatos (id, nombre, hash)  | tabla `documentos` MySQL         | **solo el servidor donde se subió**  |
+| Catálogo de docs de otros     | RAM (`PeerCatalog`), TTL 30 s    | **todos los servidores**, en caché   |
+| Lista de servidores online    | RAM (`PeerRegistry`), TTL 15 s   | **todos los servidores**             |
+| Logs de acciones              | tabla `logs` MySQL               | **el servidor donde ocurrió**        |
+| Clientes conectados           | tabla `clientes_conectados`      | **el servidor al que están**         |
+
+### Flujo de descubrimiento
+
+```
+  Cada 5 s                         Cada 5 s                  Cada 5 s
+     │                                │                         │
+┌────▼────┐  PEER_HELLO          ┌────▼────┐              ┌─────▼────┐
+│ Server A│ ───broadcast UDP───▶ │ Server B│              │ Server C │
+│         │ ◀───broadcast UDP─── │         │  ───────────▶│          │
+└─────────┘  255.255.255.255:9200└─────────┘              └──────────┘
+     ▲                                                          │
+     │                                                          │
+     └────────────  PeerRegistry ◀────────  hello ───────────────┘
+                    (id, nombre, host, puerto, lastSeen)
+                    TTL 15 s sin hello → marca offline
+
+  Cliente abre socket en 9200 con SO_REUSEADDR y captura los mismos
+  HELLO. Mantiene su propia tabla y la muestra en pestaña "Servidores".
+```
+
+### Flujo de listar documentos
+
+```
+1. Cliente conectado a Server A pide:
+   ──LISTAR_DOCUMENTOS──▶ Server A
+
+2. Server A construye respuesta:
+   docs_locales = SELECT * FROM documentos       (MySQL local de A)
+   docs_remotos = PeerCatalog.listarRemotos()    (cache TTL en RAM, NO red)
+   respuesta = docs_locales ⊕ docs_remotos
+
+3. Cliente recibe tabla unificada:
+   ┌────┬──────────┬──────┬─────────┬────────┬─────────────────┐
+   │ ID │ Nombre   │ Tam  │ Hash    │ Origen │ Servidor        │
+   ├────┼──────────┼──────┼─────────┼────────┼─────────────────┤
+   │ 1  │ a.pdf    │ 2 MB │ 8a3f... │ local  │ local           │
+   │ 5  │ foto.jpg │ 1 MB │ 9b7c... │ remoto │ b3c4d5e6 (PC3)  │
+   └────┴──────────┴──────┴─────────┴────────┴─────────────────┘
+```
+
+El `PeerCatalog` se refresca solo cada 10 s en background — el listado siempre es instantáneo.
+
+### Flujo de descarga (local vs proxy)
+
+```
+Caso 1: archivo LOCAL al servidor que atiende
+─────────────────────────────────────────────
+Cliente ──DESCARGAR_ARCHIVO {id:1, servidor:"local"}──▶ Server A
+                                                          │
+                            MySQL A: SELECT chunks       │
+                            descifra AES                  │
+Cliente ◀──────────── bytes ──────────────────────────────┘
+
+
+Caso 2: archivo REMOTO (proxy)
+──────────────────────────────
+Cliente ──DESCARGAR_ARCHIVO {id:5, servidor:"b3c4d5e6..."}──▶ Server A
+                                                                 │
+                                  busca peerId en PeerRegistry  │
+                                  → IP y puerto de Server B      │
+                                                                 │
+                       Server A ──PEER_DESCARGAR_ARCHIVO──▶ Server B
+                                                              │
+                                          MySQL B: SELECT chunks
+                                          descifra AES
+                       Server A ◀────── bytes ──────────────────┘
+                                  │
+Cliente ◀──────────── bytes ──────┘   (reenvío sin guardar copia)
+```
+
+- El cliente nunca habla directamente con B. El servidor A actúa como proxy.
+- A **no guarda copia** de lo que pasa por proxy: cada descarga vuelve a viajar B→A→cliente.
+- La descarga deja un evento `PEER_DESCARGA_PROXY` en A (entrante) y en B (saliente).
+
+### Consecuencias prácticas
+
+- Si subes a A y **A se cae**, ese archivo deja de ser descargable hasta que A vuelva.
+- El catálogo es **eventualmente consistente**: tras subir a A, B lo verá en ≤10 s.
+- **No se duplican bytes** en disco entre nodos, no se sincroniza nada pesado.
+- Logs y `clientes_conectados` son **por nodo** (cada `OBTENER_LOGS` muestra solo el servidor al que estás conectado).
+
+## Protocolo
+
+- Control: JSON línea-delimitado con `{comando, datos, timestamp}`.
+- Streams binarios: bytes crudos después del header JSON (TCP) o fragmentados en datagramas tipo `DATOS` + `FIN` (UDP).
+- UDP usa datagramas de **8 KB** (compatible con `net.inet.udp.maxdgram` por defecto en macOS). Mensajes JSON más grandes se fragmentan en `CONTROL_FRAG` + `CONTROL_END` y se reensamblan en el receptor.
+
+## Cliente GUI
+
+Pestañas en el panel derecho:
+- **Servidores** — descubrimiento UDP en vivo (auto-refresh cada 3 s + botón). Muestra `Nombre · Host · TCP · UDP · Peer · ID · Última señal`. Botón *"Usar seleccionado"* autocompleta host/puerto.
+- **Clientes** — clientes conectados al servidor actual (BD).
+- **Documentos** — locales y remotos en la misma tabla. Columna *"Servidor"* indica `local` o `<peerId>`. Al descargar un remoto, el servidor actual hace proxy.
+- **Eventos** — eventos en memoria del servidor (botón refrescar).
+- **Logs (BD)** — acciones persistidas (conexiones, uploads, descargas).
+
+## Puertos
+
+| Servicio        | Puerto | Protocolo            |
+|-----------------|--------|----------------------|
+| Cliente TCP     | 9000   | TCP                  |
+| Cliente UDP     | 9001   | UDP                  |
+| Panel web       | 8080   | HTTP                 |
+| Peer-to-peer    | 9100   | TCP entre servidores |
+| Discovery       | 9200   | UDP broadcast        |
+| MySQL           | 33306  | TCP                  |
 
 ## Requisitos
 
 - Java 17+
-- Docker y Docker Compose (para MySQL)
-- Maven (opcional si ya tienes los `target` versionados)
+- Docker + Docker Compose (para MySQL)
+- Maven (opcional)
 
-## Base de datos (MySQL)
-
-El proyecto incluye `docker-compose.yml` para levantar MySQL con esquema inicial automático:
+## Levantamiento
 
 ```bash
+# 1. MySQL
 docker compose up -d
-```
 
-Credenciales por defecto:
+# 2. Compilar
+mvn -DskipTests package
 
-- Base de datos: `mensajeria_db`
-- Usuario: `mensajeria_user`
-- Password: `mensajeria_pass`
-- Puerto: `3306`
-
-## Compilar y empaquetar (con Maven)
-
-Desde la raíz del proyecto:
-
-```bash
-mvn -q clean package
-```
-
-Esto genera los artefactos en:
-
-- `shared/target/`
-- `server/target/`
-- `client/target/`
-
-## Ejecutar el servidor
-
-Desde la raíz:
-
-```bash
+# 3. Servidor (un nodo)
 java -cp "server/target/server-1.0-SNAPSHOT.jar:server/target/libs/*" com.app.server.ServerApp
-```
 
-### Puertos usados por defecto:
-
-| Protocolo | Puerto | Descripción                    |
-|-----------|--------|--------------------------------|
-| TCP       | 9000   | Conexión persistente (cliente) |
-| UDP       | 9001   | Datagrama (cliente)            |
-| HTTP      | 8080   | Panel web (navegador)          |
-
-### Panel Web HTTP:
-
-- URL: `http://localhost:8080`
-- Conexión/desconexión HTTP desde el propio panel
-- Funcionalidades:
-  - Chat HTTP (envío y visualización de historial)
-  - Subir archivos al servidor
-  - Ver documentos guardados en BD
-  - Descargar documentos (`Original`, `Hash`, `Encriptado`)
-  - Ver clientes conectados (TCP, UDP, HTTP)
-  - Ver logs recientes del servidor
-  - Interfaz responsive dark theme
-
-### Endpoints HTTP principales
-
-- `GET /api/health` - estado del gateway
-- `POST /api/connect?port=8080` - abre sesión HTTP y registra cliente
-- `POST /api/disconnect` - cierra sesión HTTP (`X-Session-Id`)
-- `GET /api/documentos` - lista documentos
-- `GET /api/clientes` - lista clientes conectados
-- `GET /api/logs?limit=50` - últimos logs
-- `POST /api/chat` - envía mensaje (`X-Session-Id`, body JSON `{ "texto": "..." }`)
-- `GET /api/chat` - historial de chat HTTP
-- `POST /api/upload?filename=archivo.ext` - sube archivo (`X-Session-Id`)
-- `GET /api/download?documentoId=1&tipo=ORIGINAL|HASH|ENCRIPTADO` - descarga por tipo (`X-Session-Id`)
-
-### Comandos de consola del servidor:
-
-- `status` → muestra clientes activos en BD
-- `exit` → detiene el servidor (cierra todos los puertos)
-
-## Ejecutar el cliente
-
-Desde la raíz:
-
-```bash
+# 4. Cliente
 java -cp "client/target/client-1.0-SNAPSHOT.jar:client/target/libs/*" com.app.client.ClientApp
 ```
 
-Puedes abrir múltiples instancias del cliente para pruebas de mensajería/transferencia.
+### Múltiples servidores (P2P)
 
-## Ejecutar pruebas
-
-Desde la raíz:
+**Mismo PC** (pruebas) — segundo nodo con puertos y nombre distintos:
 
 ```bash
-mvn -q test
+java -cp "server/target/server-1.0-SNAPSHOT.jar:server/target/libs/*" \
+  com.app.server.ServerApp \
+  --nombre=PC-SalaB --tcp=9010 --udp=9011 --http=8081 --peer=9110
 ```
 
-### Cobertura de tests (65+ casos):
+**PCs distintos en la misma LAN** — en cada PC:
 
-**shared/**
-- `ComandoTest` - Validación de 11 comandos del protocolo
-- `MensajeTest` - Serialización/deserialización JSON
-- `CryptoUtilTest` - SHA-256 y AES-256
-
-**server/**
-- `HttpGatewayTest` (11 tests) - Endpoints REST y panel web
-- `DocumentoServiceTest` (6 tests) - Procesamiento de archivos, hash, encriptación
-- `LogServiceTest` (11 tests) - Persistencia de logs con múltiples IPs/acciones
-- `CommandDispatcherTest` (10 tests) - Estructura de comandos
-- `ClienteConectadoDAOTest` (10 tests) - Persistencia de conexiones (TCP, UDP, HTTP)
-- `ClientPoolTest` - Pool de conexiones TCP
-- `ServerModelsTest` - Entidades (Documento, ClienteConectado, Log)
-
-**client/**
-- `NetworkClientTcpTest` - Envío y descarga de archivos vía TCP
-- `NetworkClientUdpTest` (10 tests) - Conexión UDP, puerto correcto (9001), handshake
-- `HistorialDocumentoTest` - Historial local H2
-
-## Flujo sin Maven (usando `target` versionado)
-
-Si trabajas en una máquina sin Maven, puedes ejecutar directamente si ya están versionados los artefactos en `target`:
-
-1. Levantar MySQL con Docker:
+1. `docker compose up -d` (cada PC con su propia MySQL local).
+2. Asegurar que el firewall permite TCP `9000/9100/8080` y UDP `9001/9200` en la interfaz LAN.
+3. Levantar el servidor (opcionalmente con nombre legible):
 
 ```bash
-docker compose up -d
+java -cp "server/target/server-1.0-SNAPSHOT.jar:server/target/libs/*" \
+  com.app.server.ServerApp --nombre=PC-Sala-A
 ```
 
-2. Iniciar servidor:
+Si omites `--nombre`, se usa el hostname del SO. El nombre se ve en `peers`, `/api/peers`, panel web y tabla *"Servidores"* del cliente GUI.
+
+El servidor detecta automáticamente su IP LAN (IPv4 no-loopback) y la anuncia. Si tienes varias interfaces y quieres forzar una IP específica, usa `--host=192.168.1.50`. Los nodos se descubren solos por broadcast UDP en `9200`. Flag `--peers=off` desactiva P2P.
+
+Al iniciar, el servidor imprime las dos URLs del panel web:
+```
+[HTTP] Interfaz web disponible en:
+       http://localhost:8080
+       http://192.168.1.50:8080  (LAN)
+```
+
+## Flags CLI del servidor
+
+| Flag                | Default | Descripción                                  |
+|---------------------|---------|----------------------------------------------|
+| `--tcp=N`           | 9000    | puerto TCP de clientes                       |
+| `--udp=N`           | 9001    | puerto UDP de clientes                       |
+| `--http=N`          | 8080    | puerto del panel web                         |
+| `--peer=N`          | 9100    | puerto TCP entre servidores                  |
+| `--discovery=N`     | 9200    | puerto UDP broadcast de descubrimiento       |
+| `--max=N`           | 10      | clientes máximos por pool                    |
+| `--host=IP`         | auto    | IP a anunciar (si hay varias interfaces)     |
+| `--nombre=texto`    | hostname| alias legible del servidor (visible en GUIs) |
+| `--peers=off`       | on      | desactiva el módulo P2P                      |
+
+## Comandos del servidor (consola)
+
+| Comando         | Descripción                                  |
+|-----------------|----------------------------------------------|
+| `status`        | clientes activos en pool TCP/UDP             |
+| `peers`         | peers en línea con nombre, host, puertos     |
+| `remotos`       | documentos publicados por peers              |
+| `events [N]`    | últimos N eventos del buffer (default 20)    |
+| `events on/off` | activa/desactiva log de eventos en consola   |
+| `logs [N]`      | últimos N logs de BD (default 20)            |
+| `exit`          | apaga el servidor                            |
+
+## API HTTP
+
+| Método | Endpoint                       | Notas                                    |
+|--------|--------------------------------|------------------------------------------|
+| GET    | `/api/health`                  | estado del gateway                       |
+| POST   | `/api/connect?port=8080`       | abre sesión, devuelve `sessionId`        |
+| POST   | `/api/disconnect`              | header `X-Session-Id`                    |
+| GET    | `/api/documentos`              | lista (locales + remotos)                |
+| GET    | `/api/clientes`                | clientes conectados                      |
+| GET    | `/api/peers`                   | peers en línea con `nombre`              |
+| GET    | `/api/events?limit=100`        | eventos recientes del bus (memoria)      |
+| GET    | `/api/logs?limit=50`           | últimos logs de BD                       |
+| POST   | `/api/upload?filename=x.pdf`   | subir archivo (`X-Session-Id`, body bin) |
+| GET    | `/api/download?documentoId=1&tipo=ORIGINAL` | `tipo`: ORIGINAL, HASH, ENCRIPTADO |
+| POST   | `/api/chat`                    | `{texto}` (`X-Session-Id`)               |
+| GET    | `/api/chat`                    | historial                                |
+
+## Logs y eventos
+
+Cuatro lugares para verlos:
+
+1. **Archivo** — `storage/server-logs/server-YYYYMMDD-HHmmss.log` (uno por arranque).
+2. **Consola del servidor** — formato `[HH:mm:ss] [CAT] TIPO | detalles`. Categorías: `SYS`, `NET`, `POOL`, `STOR`, `MSG`, `PEER`, `ERR`. Comandos `events [N]` y `logs [N]` imprimen los últimos N en cualquier momento.
+3. **Panel web** — pestañas *"Eventos"* (memoria, refresh 2 s) y *"Logs (BD)"*.
+4. **Cliente GUI** — pestañas *"Eventos"* y *"Logs (BD)"* del servidor al que estás conectado, con botón refrescar.
+
+Buffer en memoria de los últimos 500 eventos (no requiere BD). `/api/logs` y la pestaña *Logs (BD)* muestran los registros de acciones persistidos en MySQL (conexiones, uploads, descargas), distintos de los eventos en vivo.
+
+## Seguridad
+
+- **AES-256/CBC + PBKDF2** para cifrar archivos en BD.
+- **SHA-256** para integridad.
+- Tamaño máximo de archivo: **1 GB** (validado en stream).
+- `sanitizeFileName` rechaza paths con `..` o relativos.
+
+## Tests
 
 ```bash
-java -cp "server/target/server-1.0-SNAPSHOT.jar:server/target/libs/*" com.app.server.ServerApp
+mvn test
 ```
 
-3. Iniciar cliente:
+92 tests pasan en CI (40 tests de integración con MySQL/HTTP real están `@Disabled` y se corren manualmente).
 
-```bash
-java -cp "client/target/client-1.0-SNAPSHOT.jar:client/target/libs/*" com.app.client.ClientApp
-```
+Cobertura por módulo:
+- `shared` — `ComandoTest`, `MensajeTest`, `CryptoUtilTest`.
+- `server` — `CommandDispatcherTest`, `UdpFragmentationTest`, `PeerRegistryTest`, `PeerInfoTest`, `PeerPingIntegrationTest`, `InMemoryEventBufferTest`, `ClientPoolTest`, `ServerModelsTest`.
+- `client` — `NetworkClientTcpTest`, `NetworkClientUdpTest`, `ClientDiscoveryServiceTest`, `HistorialDocumentoTest`.
 
-## Logs de ejecución del servidor
+## Notas
 
-En cada arranque del servidor se crea un log nuevo en:
-
-- `storage/server-logs/`
-
-Formato de archivo:
-
-- `server-YYYYMMDD-HHmmss.log`
-
-## Notas útiles
-
-- Si MySQL no está disponible al arrancar el servidor, el inicio fallará.
-- Asegúrate de mantener libres los puertos: `9000` (TCP), `9001` (UDP), `3306` (MySQL), `8080` (HTTP).
-- El proyecto está organizado como multi-módulo Maven (`shared`, `server`, `client`).
-- **UDP**: El cliente calcula automáticamente el puerto como `puerto_tcp + 1` (9000 → 9001).
-- **HTTP**: Requiere sesión para chat, subida y descarga (header `X-Session-Id`).
-- **Cifrado**: Todos los archivos se cifran con AES-256 y se almacenan como chunks en BD.
-- **Testing**: Ejecuta `mvn test` para validar funcionalidad en los 3 protocolos.
+- MySQL debe estar arriba antes del servidor.
+- Liberar puertos: `9000`, `9001`, `8080`, `9100`, `9200`, `33306`.
+- Para multi-PC en LAN: cada PC con su propio Docker MySQL; el broadcast UDP debe pasar el firewall.
+- El cliente GUI muestra documentos locales y remotos en la misma tabla (columna `Servidor`).
+- Descarga encriptada de peers remotos no soportada (requeriría compartir clave AES entre nodos).
+- Si un servidor se cae, sus documentos dejan de ser descargables hasta que vuelva (no hay replicación).

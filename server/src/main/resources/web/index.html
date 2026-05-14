@@ -291,6 +291,53 @@
           </table>
         </div>
       </section>
+
+      <section class="card w-6">
+        <div class="card-header">
+          <h2>Peers en linea (P2P)</h2>
+          <button id="refreshPeersBtn" type="button">Refrescar</button>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Host</th>
+                <th>Peer</th>
+                <th>TCP</th>
+                <th>UDP</th>
+                <th>ID</th>
+                <th>Ultima senal</th>
+              </tr>
+            </thead>
+            <tbody id="peersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card w-6">
+        <div class="card-header">
+          <h2>Eventos del servidor (live)</h2>
+          <span class="status" id="eventsStatus" style="margin-right:auto;margin-left:12px;">auto-refresca cada 2s</span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;color:var(--muted);">
+            <input type="checkbox" id="eventsAutoRefresh" checked> auto
+          </label>
+          <button id="refreshEventsBtn" type="button">Refrescar</button>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Hora</th>
+                <th>Tipo</th>
+                <th>Origen / Cliente</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody id="eventsBody"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -311,10 +358,16 @@
     const docsBody = document.getElementById('docsBody');
     const clientsBody = document.getElementById('clientsBody');
     const logsBody = document.getElementById('logsBody');
+    const peersBody = document.getElementById('peersBody');
+    const eventsBody = document.getElementById('eventsBody');
+    const eventsStatus = document.getElementById('eventsStatus');
+    const eventsAutoRefresh = document.getElementById('eventsAutoRefresh');
 
     const refreshDocsBtn = document.getElementById('refreshDocsBtn');
     const refreshClientsBtn = document.getElementById('refreshClientsBtn');
     const refreshLogsBtn = document.getElementById('refreshLogsBtn');
+    const refreshPeersBtn = document.getElementById('refreshPeersBtn');
+    const refreshEventsBtn = document.getElementById('refreshEventsBtn');
     let sessionId = '';
 
     function isConnected() {
@@ -429,6 +482,47 @@
           <td>${l.detalles ?? ''}</td>
         `;
       });
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function shortId(s) {
+      return s && s.length > 8 ? s.substring(0, 8) : (s ?? '');
+    }
+
+    async function refreshPeers() {
+      const peers = await fetchJson('/api/peers');
+      renderRows(peersBody, peers, (tr, p) => {
+        tr.innerHTML = `
+          <td><strong>${escapeHtml(p.nombre ?? '')}</strong></td>
+          <td>${escapeHtml(p.host)}</td>
+          <td>${p.puertoPeer ?? ''}</td>
+          <td>${p.puertoTcp ?? ''}</td>
+          <td>${p.puertoUdp ?? ''}</td>
+          <td title="${escapeHtml(p.id)}">${escapeHtml(shortId(p.id))}</td>
+          <td>${escapeHtml(p.ultimaSenal)}</td>
+        `;
+      });
+    }
+
+    async function refreshEvents() {
+      const events = await fetchJson('/api/events?limit=100');
+      renderRows(eventsBody, events, (tr, e) => {
+        const hora = (e.timestamp || '').replace(/^.*T/, '').replace(/\..*$/, '');
+        const ref = e.cliente || e.origen || '';
+        tr.innerHTML = `
+          <td>${escapeHtml(hora)}</td>
+          <td>${escapeHtml(e.tipo)}</td>
+          <td>${escapeHtml(ref)}</td>
+          <td>${escapeHtml(e.detalle)}</td>
+        `;
+      });
+      eventsStatus.textContent = events.length + ' eventos';
     }
 
     async function uploadFile() {
@@ -614,9 +708,18 @@
     refreshDocsBtn.addEventListener('click', () => refreshDocumentos().catch((e) => setStatus(e.message)));
     refreshClientsBtn.addEventListener('click', () => refreshClientes().catch((e) => setStatus(e.message)));
     refreshLogsBtn.addEventListener('click', () => refreshLogs().catch((e) => setStatus(e.message)));
+    refreshPeersBtn.addEventListener('click', () => refreshPeers().catch((e) => setStatus(e.message)));
+    refreshEventsBtn.addEventListener('click', () => refreshEvents().catch((e) => setStatus(e.message)));
+
+    setInterval(() => {
+      if (!eventsAutoRefresh.checked) return;
+      refreshEvents().catch(() => { eventsStatus.textContent = 'error consultando eventos'; });
+      refreshPeers().catch(() => { /* silencioso */ });
+    }, 2000);
 
     updateConnectionUi();
-    Promise.all([refreshDocumentos(), refreshClientes(), refreshLogs(), refreshChat()])
+    Promise.all([refreshDocumentos(), refreshClientes(), refreshLogs(), refreshChat(),
+                 refreshPeers(), refreshEvents()])
       .then(() => setStatus('Panel HTTP listo. Conectate para operar.', true))
       .catch((error) => setStatus('No se pudo cargar el panel: ' + error.message));
   </script>

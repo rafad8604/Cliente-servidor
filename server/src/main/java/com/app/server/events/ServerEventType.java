@@ -2,7 +2,7 @@ package com.app.server.events;
 
 /**
  * Tipos de eventos internos del servidor sobre los que se puede observar.
- * Cubren los puntos de interés indicados por la especificación del refactor.
+ * Cubren los puntos de interes indicados por la especificacion del refactor.
  */
 public enum ServerEventType {
     SERVIDOR_INICIADO,
@@ -27,6 +27,15 @@ public enum ServerEventType {
 
     DOCUMENTO_RECONSTRUIDO,
     MENSAJE_RECIBIDO,
+
+    // Eventos peer-to-peer
+    PEER_DESCUBIERTO,
+    PEER_OFFLINE,
+    PEER_HELLO_RECIBIDO,
+    PEER_CONEXION_ENTRANTE,
+    PEER_CATALOGO_ACTUALIZADO,
+    PEER_DESCARGA_PROXY,
+    PEER_ERROR,
 
     ERROR
 }

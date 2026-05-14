@@ -39,12 +39,14 @@ class NetworkClientUdpTest {
                 int tipo = data[0] & 0xFF;
                 assertEquals(0, tipo); // Control packet
                 
-                // Enviar respuesta
+                int sessionId = ByteBuffer.wrap(data, 1, 4).getInt();
+
+                // Enviar respuesta usando la misma sesión solicitada por el cliente
                 Mensaje respuesta = new Mensaje(Comando.SESION_INFO).put("status", "CONECTADO");
                 byte[] payload = respuesta.toJson().getBytes(StandardCharsets.UTF_8);
                 byte[] responsePacket = new byte[HEADER_SIZE + payload.length];
                 responsePacket[0] = 0;
-                ByteBuffer.wrap(responsePacket, 1, 4).putInt(0);
+                ByteBuffer.wrap(responsePacket, 1, 4).putInt(sessionId);
                 ByteBuffer.wrap(responsePacket, 5, 4).putInt(0);
                 System.arraycopy(payload, 0, responsePacket, HEADER_SIZE, payload.length);
                 
@@ -58,27 +60,24 @@ class NetworkClientUdpTest {
         });
 
         try {
-            NetworkClient client = new NetworkClient("127.0.0.1", 9000, NetworkClient.Protocolo.UDP);
-            
-            // El cliente debe calcular puerto = 9000 + 1 = 9001 internamente
-            // Para esta prueba, simulamos el comportamiento esperado
-            assertDoesNotThrow(() -> {
-                // Solo validamos que el constructor funciona
-                assertNotNull(client);
-            });
-            
+            NetworkClient client = new NetworkClient("127.0.0.1", port, NetworkClient.Protocolo.UDP);
+            Mensaje sesion = client.conectar();
+
+            assertNotNull(sesion);
+            assertEquals("CONECTADO", sesion.getString("status"));
+            serverTask.get(2, TimeUnit.SECONDS);
+            client.close();
         } finally {
             udpServer.close();
         }
     }
 
     @Test
-    void puertoUdpCalculoSegunTcp() {
-        // Cuando TCP port = 9000, UDP debe ser 9001
-        NetworkClient client = new NetworkClient("localhost", 9000, NetworkClient.Protocolo.UDP);
+    void puertoUdpUsaValorConfigurado() {
+        // UDP usa exactamente el puerto indicado, sin sumar 1 internamente.
+        NetworkClient client = new NetworkClient("localhost", 9001, NetworkClient.Protocolo.UDP);
         assertNotNull(client);
         
-        // Cuando TCP port = 8000, UDP debe ser 8001
         NetworkClient client2 = new NetworkClient("localhost", 8000, NetworkClient.Protocolo.UDP);
         assertNotNull(client2);
     }
@@ -123,11 +122,9 @@ class NetworkClientUdpTest {
     }
 
     @Test
-    void udpPuertoPorDefectoEs9001() {
-        // Por convención, puerto UDP debe ser 9001 cuando se conecta a servidor en 9000
-        int tcpPort = 9000;
-        int expectedUdpPort = (tcpPort == 9000) ? 9001 : (tcpPort + 1);
-        assertEquals(9001, expectedUdpPort);
+    void udpPuertoConfiguradoPuedeSer9001() {
+        int configuredUdpPort = 9001;
+        assertEquals(9001, configuredUdpPort);
     }
 
     @Test
@@ -145,8 +142,7 @@ class NetworkClientUdpTest {
     void udpEnvironmentInfoLogging() {
         // Validar que el cliente UDP muestra información correcta al conectar
         String hostInfo = "127.0.0.1";
-        int port = 9000;
-        int udpPort = (port == 9000) ? 9001 : (port + 1);
+        int udpPort = 9001;
         
         String logMessage = String.format("[UDP] Conectando a %s:%d", hostInfo, udpPort);
         assertEquals("[UDP] Conectando a 127.0.0.1:9001", logMessage);
