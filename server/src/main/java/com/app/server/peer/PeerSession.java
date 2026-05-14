@@ -5,6 +5,8 @@ import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
+import com.app.server.net.BoundedInputStream;
+import com.app.server.net.DocumentoEnvioHelper;
 import com.app.server.service.DocumentoService;
 import com.app.shared.protocol.Comando;
 import com.app.shared.protocol.Mensaje;
@@ -119,6 +121,8 @@ public class PeerSession implements Runnable {
                         row.put("protocolo", c.getProtocolo());
                         row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
                         row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
+                        row.put("servidor", "local");
+                        row.put("peerId", registry.getLocalId());
                         rows.add(row);
                     }
                 }
@@ -128,7 +132,7 @@ public class PeerSession implements Runnable {
             }
             case PEER_LISTAR_DOCS: {
                 List<Map<String, Object>> rows = new ArrayList<>();
-                for (Documento d : documentoService.listarDocumentos()) {
+                for (Documento d : documentoService.listarDocumentosPublicos()) {
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("id", d.getId());
                     row.put("nombre", d.getNombre());
@@ -178,6 +182,45 @@ public class PeerSession implements Runnable {
                 if (eventBus != null) {
                     eventBus.publish(ServerEventType.PEER_DESCARGA_PROXY, "peer-session",
                             "peer=" + remotePeerId + " docId=" + docId + " (saliente)");
+                }
+                return true;
+            }
+            case PEER_ENTREGAR_MENSAJE: {
+                String texto = msg.getString("texto");
+                if (texto == null || texto.isBlank()) {
+                    enviarLinea(out, Mensaje.error("texto vacio").toJson());
+                    return true;
+                }
+                String ipProp = msg.getString("ipPropietario");
+                if (ipProp == null || ipProp.isBlank()) {
+                    ipProp = socket.getInetAddress().getHostAddress();
+                }
+                DocumentoService.DocumentoEnvioParams envio = DocumentoEnvioHelper.buildParamsFromRelay(msg);
+                try {
+                    Documento doc = documentoService.procesarMensaje(texto, ipProp, envio);
+                    enviarLinea(out, Mensaje.respuestaOk("hash", doc.getHashSha256())
+                            .put("documentoId", doc.getId())
+                            .put("mensaje", "Mensaje relay almacenado").toJson());
+                } catch (Exception e) {
+                    enviarLinea(out, Mensaje.error("Relay mensaje: " + e.getMessage()).toJson());
+                }
+                return true;
+            }
+            case PEER_ENTREGAR_ARCHIVO: {
+                String nombre = msg.getString("nombre");
+                long tamano = msg.getLong("tamano");
+                String ipProp = msg.getString("ipPropietario");
+                if (ipProp == null || ipProp.isBlank()) {
+                    ipProp = socket.getInetAddress().getHostAddress();
+                }
+                DocumentoService.DocumentoEnvioParams envio = DocumentoEnvioHelper.buildParamsFromRelay(msg);
+                try (InputStream limited = new BoundedInputStream(in, tamano)) {
+                    Documento doc = documentoService.procesarArchivo(nombre, tamano, ipProp, limited, envio);
+                    enviarLinea(out, Mensaje.respuestaOk("hash", doc.getHashSha256())
+                            .put("documentoId", doc.getId())
+                            .put("mensaje", "Archivo relay almacenado").toJson());
+                } catch (Exception e) {
+                    enviarLinea(out, Mensaje.error("Relay archivo: " + e.getMessage()).toJson());
                 }
                 return true;
             }

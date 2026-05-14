@@ -38,8 +38,19 @@ CREATE TABLE IF NOT EXISTS documentos (
     ip_propietario VARCHAR(45) NOT NULL,
     tipo ENUM('MENSAJE', 'ARCHIVO') NOT NULL,
     fecha_creacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    envio_alcance ENUM('TODOS','DIRIGIDO') NOT NULL DEFAULT 'TODOS',
+    dest_ip VARCHAR(45) NULL,
+    dest_puerto INT NULL,
+    dest_protocolo VARCHAR(10) NULL,
+    origen_servidor_etiqueta VARCHAR(500) NULL,
+    origen_peer_id VARCHAR(64) NULL,
+    remitente_nombre VARCHAR(200) NULL,
+    remitente_puerto INT NULL,
+    remitente_protocolo VARCHAR(10) NULL,
     INDEX idx_ip_propietario (ip_propietario),
-    INDEX idx_tipo (tipo)
+    INDEX idx_tipo (tipo),
+    INDEX idx_envio_alcance (envio_alcance),
+    INDEX idx_dest_cliente (dest_ip, dest_puerto, dest_protocolo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Tabla de chunks (1 tabla para todos los chunks del documento)
@@ -82,5 +93,15 @@ DELIMITER ;
 
 CALL agregar_columna_si_no_existe('documentos_chunks', 'codificacion', "VARCHAR(16) NOT NULL DEFAULT 'RAW'");
 CALL agregar_columna_si_no_existe('clientes_conectados', 'nombre', "VARCHAR(100) NOT NULL DEFAULT ''");
+
+CALL agregar_columna_si_no_existe('documentos', 'envio_alcance', "ENUM('TODOS','DIRIGIDO') NOT NULL DEFAULT 'TODOS'");
+CALL agregar_columna_si_no_existe('documentos', 'dest_ip', "VARCHAR(45) NULL");
+CALL agregar_columna_si_no_existe('documentos', 'dest_puerto', "INT NULL");
+CALL agregar_columna_si_no_existe('documentos', 'dest_protocolo', "VARCHAR(10) NULL");
+CALL agregar_columna_si_no_existe('documentos', 'origen_servidor_etiqueta', "VARCHAR(500) NULL");
+CALL agregar_columna_si_no_existe('documentos', 'origen_peer_id', "VARCHAR(64) NULL");
+CALL agregar_columna_si_no_existe('documentos', 'remitente_nombre', "VARCHAR(200) NULL");
+CALL agregar_columna_si_no_existe('documentos', 'remitente_puerto', "INT NULL");
+CALL agregar_columna_si_no_existe('documentos', 'remitente_protocolo', "VARCHAR(10) NULL");
 
 DROP PROCEDURE IF EXISTS agregar_columna_si_no_existe;

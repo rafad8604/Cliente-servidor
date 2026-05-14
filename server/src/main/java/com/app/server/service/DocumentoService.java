@@ -17,6 +17,7 @@ import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.security.GeneralSecurityException;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -28,6 +29,114 @@ public class DocumentoService {
 
     private static final String STORAGE_DIR = "./storage";
     public static final long MAX_FILE_SIZE = 1024L * 1024L * 1024L; // 1 GB
+
+    /**
+     * Parametros opcionales de envio dirigido / metadatos de origen y remitente.
+     */
+    public static final class DocumentoEnvioParams {
+        private Documento.EnvioAlcance alcance = Documento.EnvioAlcance.TODOS;
+        private String destIp;
+        private Integer destPuerto;
+        private String destProtocolo;
+        private String origenServidorEtiqueta;
+        private String origenPeerId;
+        private String remitenteNombre;
+        private Integer remitentePuerto;
+        private String remitenteProtocolo;
+
+        public Documento.EnvioAlcance getAlcance() {
+            return alcance;
+        }
+
+        public DocumentoEnvioParams setAlcance(Documento.EnvioAlcance alcance) {
+            this.alcance = alcance != null ? alcance : Documento.EnvioAlcance.TODOS;
+            return this;
+        }
+
+        public String getDestIp() {
+            return destIp;
+        }
+
+        public DocumentoEnvioParams setDestIp(String destIp) {
+            this.destIp = destIp;
+            return this;
+        }
+
+        public Integer getDestPuerto() {
+            return destPuerto;
+        }
+
+        public DocumentoEnvioParams setDestPuerto(Integer destPuerto) {
+            this.destPuerto = destPuerto;
+            return this;
+        }
+
+        public String getDestProtocolo() {
+            return destProtocolo;
+        }
+
+        public DocumentoEnvioParams setDestProtocolo(String destProtocolo) {
+            this.destProtocolo = destProtocolo;
+            return this;
+        }
+
+        public String getOrigenServidorEtiqueta() {
+            return origenServidorEtiqueta;
+        }
+
+        public DocumentoEnvioParams setOrigenServidorEtiqueta(String origenServidorEtiqueta) {
+            this.origenServidorEtiqueta = origenServidorEtiqueta;
+            return this;
+        }
+
+        public String getOrigenPeerId() {
+            return origenPeerId;
+        }
+
+        public DocumentoEnvioParams setOrigenPeerId(String origenPeerId) {
+            this.origenPeerId = origenPeerId;
+            return this;
+        }
+
+        public String getRemitenteNombre() {
+            return remitenteNombre;
+        }
+
+        public DocumentoEnvioParams setRemitenteNombre(String remitenteNombre) {
+            this.remitenteNombre = remitenteNombre;
+            return this;
+        }
+
+        public Integer getRemitentePuerto() {
+            return remitentePuerto;
+        }
+
+        public DocumentoEnvioParams setRemitentePuerto(Integer remitentePuerto) {
+            this.remitentePuerto = remitentePuerto;
+            return this;
+        }
+
+        public String getRemitenteProtocolo() {
+            return remitenteProtocolo;
+        }
+
+        public DocumentoEnvioParams setRemitenteProtocolo(String remitenteProtocolo) {
+            this.remitenteProtocolo = remitenteProtocolo;
+            return this;
+        }
+
+        void applyTo(Documento doc) {
+            doc.setEnvioAlcance(alcance);
+            doc.setDestIp(destIp);
+            doc.setDestPuerto(destPuerto);
+            doc.setDestProtocolo(destProtocolo);
+            doc.setOrigenServidorEtiqueta(origenServidorEtiqueta);
+            doc.setOrigenPeerId(origenPeerId);
+            doc.setRemitenteNombre(remitenteNombre);
+            doc.setRemitentePuerto(remitentePuerto);
+            doc.setRemitenteProtocolo(remitenteProtocolo);
+        }
+    }
 
     private final DocumentoDAO documentoDAO;
     private final SecretKey serverKey;
@@ -56,6 +165,12 @@ public class DocumentoService {
      *   4. persistir en chunks en BD
      */
     public Documento procesarArchivo(String nombre, long tamano, String ipOrigen, InputStream dataIn)
+            throws IOException, GeneralSecurityException, java.sql.SQLException {
+        return procesarArchivo(nombre, tamano, ipOrigen, dataIn, null);
+    }
+
+    public Documento procesarArchivo(String nombre, long tamano, String ipOrigen, InputStream dataIn,
+                                       DocumentoEnvioParams envio)
             throws IOException, GeneralSecurityException, java.sql.SQLException {
         if (tamano < 0 || tamano > MAX_FILE_SIZE) {
             throw new IOException("Tamano de archivo invalido o supera el limite ("
@@ -99,6 +214,9 @@ public class DocumentoService {
                 ipOrigen,
                 Documento.Tipo.ARCHIVO
         );
+        if (envio != null) {
+            envio.applyTo(doc);
+        }
 
         try (FileInputStream fis = new FileInputStream(encryptedTmp)) {
             long docId = documentoDAO.insertarConChunks(doc, fis);
@@ -117,12 +235,20 @@ public class DocumentoService {
      */
     public Documento procesarMensaje(String texto, String ipOrigen)
             throws GeneralSecurityException, java.sql.SQLException {
+        return procesarMensaje(texto, ipOrigen, null);
+    }
+
+    public Documento procesarMensaje(String texto, String ipOrigen, DocumentoEnvioParams envio)
+            throws GeneralSecurityException, java.sql.SQLException {
 
         byte[] textBytes = texto.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         String hash = CryptoUtil.hashSHA256(texto);
 
         Documento doc = new Documento("mensaje_" + System.currentTimeMillis(), "txt",
                 textBytes.length, null, hash, ipOrigen, Documento.Tipo.MENSAJE);
+        if (envio != null) {
+            envio.applyTo(doc);
+        }
 
         byte[] iv = CryptoUtil.generateIV();
         byte[] encriptado = CryptoUtil.encrypt(textBytes, serverKey, iv);
@@ -250,6 +376,40 @@ public class DocumentoService {
 
     public List<Documento> listarDocumentos() throws java.sql.SQLException {
         return documentoDAO.listarTodos();
+    }
+
+    public List<Documento> listarDocumentosPublicos() throws java.sql.SQLException {
+        return documentoDAO.listarPublicos();
+    }
+
+    public List<Documento> listarDocumentosPrivados(String ip, int puerto, String protocolo)
+            throws java.sql.SQLException {
+        return documentoDAO.listarPrivadosParaCliente(ip, puerto, protocolo);
+    }
+
+    /**
+     * Comprueba si un cliente puede leer un documento local (catalogo publico o dirigido a el / enviado por el).
+     */
+    public boolean puedeAccederDocumentoLocal(long documentoId, String ip, int puerto, String protocolo)
+            throws java.sql.SQLException {
+        Documento d = documentoDAO.obtenerPorId(documentoId);
+        if (d == null) {
+            return false;
+        }
+        if (d.getEnvioAlcance() == Documento.EnvioAlcance.TODOS) {
+            return true;
+        }
+        if (Objects.equals(ip, d.getDestIp())
+                && d.getDestPuerto() != null && d.getDestPuerto() == puerto
+                && Objects.equals(protocolo, d.getDestProtocolo())) {
+            return true;
+        }
+        if (Objects.equals(ip, d.getIpPropietario())
+                && d.getRemitentePuerto() != null && d.getRemitentePuerto() == puerto
+                && Objects.equals(protocolo, d.getRemitenteProtocolo())) {
+            return true;
+        }
+        return false;
     }
 
     public Documento obtenerDocumento(long id) throws java.sql.SQLException {

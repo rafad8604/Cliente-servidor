@@ -9,6 +9,8 @@ import com.app.server.events.ServerEventType;
 import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.models.Log;
+import com.app.server.net.ClientContext;
+import com.app.server.net.DocumentoEnvioHelper;
 import com.app.server.peer.PeerCatalog;
 import com.app.server.peer.PeerClient;
 import com.app.server.peer.PeerInfo;
@@ -132,7 +134,58 @@ public class CommandDispatcher {
                     channel.sendMensaje(Mensaje.error("Mensaje vacio"));
                     return true;
                 }
-                Documento doc = documentoService.procesarMensaje(texto, channel.getContext().getIp());
+                String remitenteNombre = nameCache != null
+                        ? nameCache.getOrIp(channel.getContext().getIp()) : "";
+                String destServidor = msg.getString("destServidor");
+
+                if (peerRegistry != null && peerClient != null
+                        && DocumentoEnvioHelper.esPeerRemoto(destServidor, peerRegistry)) {
+                    DocumentoService.DocumentoEnvioParams chk = DocumentoEnvioHelper.buildLocalParams(
+                            msg, channel.getContext(), remitenteNombre);
+                    if (chk.getAlcance() != Documento.EnvioAlcance.DIRIGIDO) {
+                        channel.sendMensaje(Mensaje.error("Envio a otro servidor requiere envioAlcance DIRIGIDO"));
+                        return true;
+                    }
+                    if (chk.getDestIp() == null || chk.getDestPuerto() == null || chk.getDestProtocolo() == null) {
+                        channel.sendMensaje(Mensaje.error("Destino incompleto: destIp, destPuerto, destProtocolo"));
+                        return true;
+                    }
+                    PeerInfo destPeer = peerRegistry.getById(destServidor.trim())
+                            .orElse(null);
+                    if (destPeer == null) {
+                        channel.sendMensaje(Mensaje.error("Peer destino no encontrado u offline"));
+                        return true;
+                    }
+                    String localId = peerRegistry.getLocalId();
+                    String origenEtiqueta = peerClient.getSelfInfo().getNombre()
+                            + " (" + localId.substring(0, Math.min(8, localId.length())) + ")";
+                    Mensaje relay = DocumentoEnvioHelper.buildRelayMensajePayload(
+                            texto, msg, channel.getContext(), remitenteNombre, origenEtiqueta, localId);
+                    try {
+                        Mensaje respPeer = peerClient.entregarMensajePeer(destPeer, relay);
+                        if (respPeer.getComando() == Comando.ERROR) {
+                            channel.sendMensaje(Mensaje.error(
+                                    respPeer.getString("detalle") != null
+                                            ? respPeer.getString("detalle") : "Error en peer remoto"));
+                            return true;
+                        }
+                        channel.sendMensaje(respPeer);
+                    } catch (Exception e) {
+                        channel.sendMensaje(Mensaje.error("Relay a peer: " + e.getMessage()));
+                    }
+                    return true;
+                }
+
+                DocumentoService.DocumentoEnvioParams envio = DocumentoEnvioHelper.buildLocalParams(
+                        msg, channel.getContext(), remitenteNombre);
+                if (envio.getAlcance() == Documento.EnvioAlcance.DIRIGIDO) {
+                    if (envio.getDestIp() == null || envio.getDestPuerto() == null
+                            || envio.getDestProtocolo() == null) {
+                        channel.sendMensaje(Mensaje.error("Destino incompleto para envio DIRIGIDO"));
+                        return true;
+                    }
+                }
+                Documento doc = documentoService.procesarMensaje(texto, channel.getContext().getIp(), envio);
                 logService.logMensajeRecibido(channel.getContext().getIp());
                 if (eventBus != null) {
                     eventBus.publish(ServerEventType.MENSAJE_RECIBIDO,
@@ -146,7 +199,7 @@ public class CommandDispatcher {
             }
             case LISTAR_DOCUMENTOS: {
                 List<Map<String, Object>> rows = new ArrayList<>();
-                for (Documento d : documentoService.listarDocumentos()) {
+                for (Documento d : documentoService.listarDocumentosPublicos()) {
                     Map<String, Object> row = documentoToRow(d, "local", null);
                     if (nameCache != null) row.put("nombrePropietario", nameCache.getOrIp(d.getIpPropietario()));
                     rows.add(row);
@@ -155,6 +208,17 @@ public class CommandDispatcher {
                     for (PeerCatalog.RemoteDocumento rd : peerCatalog.listarRemotos()) {
                         rows.add(remotoToRow(rd));
                     }
+                }
+                channel.sendMensaje(Mensaje.respuestaOk("documentos", GSON.toJson(rows))
+                        .put("total", rows.size()));
+                return true;
+            }
+            case LISTAR_DOCUMENTOS_PRIVADOS: {
+                ClientContext ctx = channel.getContext();
+                List<Map<String, Object>> rows = new ArrayList<>();
+                for (Documento d : documentoService.listarDocumentosPrivados(
+                        ctx.getIp(), ctx.getPort(), ctx.getProtocol())) {
+                    rows.add(documentoToRowPrivado(d));
                 }
                 channel.sendMensaje(Mensaje.respuestaOk("documentos", GSON.toJson(rows))
                         .put("total", rows.size()));
@@ -187,6 +251,11 @@ public class CommandDispatcher {
                     row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
                     row.put("nombre", c.getNombre() != null ? c.getNombre() : "");
                     row.put("servidor", "local");
+                    if (peerRegistry != null) {
+                        row.put("peerId", peerRegistry.getLocalId());
+                    } else {
+                        row.put("peerId", "");
+                    }
                     rows.add(row);
                 }
                 if (peerRegistry != null && peerClient != null) {
@@ -201,6 +270,7 @@ public class CommandDispatcher {
                                     String label = peer.getNombre() + " (" + peer.getId().substring(0, 8) + ")";
                                     for (Map<String, Object> row : peerRows) {
                                         row.put("servidor", label);
+                                        row.put("peerId", peer.getId());
                                         rows.add(row);
                                     }
                                 }
@@ -292,6 +362,13 @@ public class CommandDispatcher {
                     channel.sendMensaje(Mensaje.error("Documento no encontrado: " + docId));
                     return true;
                 }
+                if (!documentoService.puedeAccederDocumentoLocal(docId,
+                        channel.getContext().getIp(),
+                        channel.getContext().getPort(),
+                        channel.getContext().getProtocol())) {
+                    channel.sendMensaje(Mensaje.error("Acceso denegado al documento"));
+                    return true;
+                }
                 logService.logDescarga(channel.getContext().getIp(), "doc-" + docId, "HASH");
                 byte[] hashBytes = hash.getBytes(StandardCharsets.UTF_8);
                 channel.sendMensaje(Mensaje.respuestaOk("hash", hash)
@@ -302,6 +379,33 @@ public class CommandDispatcher {
             default:
                 return false;
         }
+    }
+
+    private Map<String, Object> documentoToRowPrivado(Documento d) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", d.getId());
+        row.put("nombre", d.getNombre());
+        row.put("resumen", d.getNombre());
+        row.put("extension", d.getExtension() != null ? d.getExtension() : "");
+        row.put("tamano", d.getTamano());
+        row.put("tipo", d.getTipo() != null ? d.getTipo().name() : null);
+        row.put("hash", d.getHashSha256());
+        String remNom = d.getRemitenteNombre() != null ? d.getRemitenteNombre() : "";
+        row.put("remitente", remNom + " / " + d.getIpPropietario());
+        if (d.getEnvioAlcance() == Documento.EnvioAlcance.DIRIGIDO
+                && d.getDestIp() != null && !d.getDestIp().isBlank()
+                && d.getDestPuerto() != null && d.getDestProtocolo() != null) {
+            row.put("destinatario", d.getDestIp() + ":" + d.getDestPuerto() + " " + d.getDestProtocolo());
+        } else {
+            row.put("destinatario", "—");
+        }
+        row.put("origenServidorEtiqueta",
+                d.getOrigenServidorEtiqueta() != null && !d.getOrigenServidorEtiqueta().isBlank()
+                        ? d.getOrigenServidorEtiqueta() : "local");
+        row.put("fecha", d.getFechaCreacion() != null ? d.getFechaCreacion().toString() : null);
+        row.put("origen", "local");
+        row.put("servidor", "local");
+        return row;
     }
 
     private Map<String, Object> documentoToRow(Documento d, String origen, String peerId) {

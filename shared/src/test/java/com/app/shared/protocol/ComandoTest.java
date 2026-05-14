@@ -19,6 +19,7 @@ class ComandoTest {
         assertTrue(nombres.contains("ENVIAR_ARCHIVO"));
         assertTrue(nombres.contains("ENVIAR_MENSAJE"));
         assertTrue(nombres.contains("LISTAR_DOCUMENTOS"));
+        assertTrue(nombres.contains("LISTAR_DOCUMENTOS_PRIVADOS"));
         assertTrue(nombres.contains("DESCARGAR_ARCHIVO"));
         assertTrue(nombres.contains("DESCARGAR_HASH"));
         assertTrue(nombres.contains("DESCARGAR_ENCRIPTADO"));
@@ -41,8 +42,10 @@ class ComandoTest {
         assertTrue(nombres.contains("PEER_HELLO"));
         assertTrue(nombres.contains("PEER_BYE"));
         assertTrue(nombres.contains("PEER_PING"));
-        assertTrue(nombres.contains("PEER_LISTAR_DOCS"));
+        assertTrue(nombres.contains("PEER_LISTAR_CLIENTES"));
         assertTrue(nombres.contains("PEER_DESCARGAR_ARCHIVO"));
         assertTrue(nombres.contains("PEER_DESCARGAR_HASH"));
+        assertTrue(nombres.contains("PEER_ENTREGAR_MENSAJE"));
+        assertTrue(nombres.contains("PEER_ENTREGAR_ARCHIVO"));
     }
 }

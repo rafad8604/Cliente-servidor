@@ -108,22 +108,27 @@ public class NetworkClient implements Closeable {
     }
 
     public CompletableFuture<Mensaje> enviarArchivo(File file, Consumer<Long> onProgress) {
+        return enviarArchivo(file, onProgress, null);
+    }
+
+    public CompletableFuture<Mensaje> enviarArchivo(File file, Consumer<Long> onProgress, DestinoEnvio destino) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 return (protocolo == Protocolo.TCP)
-                        ? enviarArchivoTcp(file, onProgress)
-                        : enviarArchivoUdp(file, onProgress);
+                        ? enviarArchivoTcp(file, onProgress, destino)
+                        : enviarArchivoUdp(file, onProgress, destino);
             } catch (Exception e) {
                 throw new CompletionException(e);
             }
         }, fileUploadPool);
     }
 
-    private Mensaje enviarArchivoTcp(File file, Consumer<Long> onProgress) throws Exception {
+    private Mensaje enviarArchivoTcp(File file, Consumer<Long> onProgress, DestinoEnvio destino) throws Exception {
         synchronized (tcpRequestLock) {
             Mensaje header = new Mensaje(Comando.ENVIAR_ARCHIVO)
                     .put("nombre", file.getName())
                     .put("tamano", file.length());
+            aplicarDestinoAlMensaje(header, destino);
             enviarLineaTcp(header.toJson());
 
             try (FileInputStream fis = new FileInputStream(file)) {
@@ -145,12 +150,13 @@ public class NetworkClient implements Closeable {
         }
     }
 
-    private Mensaje enviarArchivoUdp(File file, Consumer<Long> onProgress) throws Exception {
+    private Mensaje enviarArchivoUdp(File file, Consumer<Long> onProgress, DestinoEnvio destino) throws Exception {
         int sessionId = random.nextInt(Integer.MAX_VALUE);
 
         Mensaje header = new Mensaje(Comando.ENVIAR_ARCHIVO)
                 .put("nombre", file.getName())
                 .put("tamano", file.length());
+        aplicarDestinoAlMensaje(header, destino);
         enviarControlUdp(header, sessionId);
         recibirControlUdp(sessionId);
 
@@ -186,8 +192,17 @@ public class NetworkClient implements Closeable {
     }
 
     public Mensaje enviarMensaje(String texto) throws IOException {
+        return enviarMensaje(texto, null);
+    }
+
+    public Mensaje enviarMensaje(String texto, DestinoEnvio destino) throws IOException {
         Mensaje msg = new Mensaje(Comando.ENVIAR_MENSAJE).put("texto", texto);
+        aplicarDestinoAlMensaje(msg, destino);
         return enviarComandoSimple(msg);
+    }
+
+    public Mensaje listarDocumentosPrivados() throws IOException {
+        return enviarComandoSimple(new Mensaje(Comando.LISTAR_DOCUMENTOS_PRIVADOS));
     }
 
     public Mensaje listarDocumentos() throws IOException {
@@ -507,6 +522,46 @@ public class NetworkClient implements Closeable {
     }
 
     // ==================== Configuracion ====================
+
+    /**
+     * Destino de envio: todos los clientes del servidor o un cliente concreto
+     * (posiblemente en otro servidor vinculado por {@code destServidor} = peerId).
+     */
+    public static final class DestinoEnvio {
+        public final boolean todos;
+        public final String destIp;
+        public final int destPuerto;
+        public final String destProtocolo;
+        public final String destServidor;
+
+        public static DestinoEnvio todos() {
+            return new DestinoEnvio(true, null, 0, null, "local");
+        }
+
+        public static DestinoEnvio cliente(String destIp, int destPuerto, String destProtocolo, String destServidor) {
+            String srv = destServidor != null && !destServidor.isBlank() ? destServidor : "local";
+            return new DestinoEnvio(false, destIp, destPuerto, destProtocolo, srv);
+        }
+
+        private DestinoEnvio(boolean todos, String destIp, int destPuerto, String destProtocolo, String destServidor) {
+            this.todos = todos;
+            this.destIp = destIp;
+            this.destPuerto = destPuerto;
+            this.destProtocolo = destProtocolo;
+            this.destServidor = destServidor;
+        }
+    }
+
+    private static void aplicarDestinoAlMensaje(Mensaje m, DestinoEnvio d) {
+        if (d == null || d.todos) {
+            return;
+        }
+        m.put("envioAlcance", "DIRIGIDO");
+        m.put("destIp", d.destIp);
+        m.put("destPuerto", d.destPuerto);
+        m.put("destProtocolo", d.destProtocolo);
+        m.put("destServidor", d.destServidor);
+    }
 
     public void setOnMessageReceived(Consumer<Mensaje> callback) {
         this.onMessageReceived = callback;
