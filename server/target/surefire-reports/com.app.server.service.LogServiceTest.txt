@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.app.server.service.LogServiceTest
 -------------------------------------------------------------------------------
-Tests run: 11, Failures: 0, Errors: 0, Skipped: 11, Time elapsed: 0.004 s -- in com.app.server.service.LogServiceTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 11, Time elapsed: 0.009 s -- in com.app.server.service.LogServiceTest

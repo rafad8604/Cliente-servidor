@@ -194,14 +194,14 @@ public class MainFrame extends JFrame {
         tblDocumentos.getColumnModel().getColumn(7).setCellRenderer(shortIdRenderer);
 
         modelDocumentosPrivados = new DefaultTableModel(
-                new String[]{"ID", "Resumen", "Remitente", "Origen servidor", "Fecha", "Tipo", "Servidor"}, 0) {
+                new String[]{"ID", "Resumen", "Remitente", "Destinatario", "Origen servidor", "Fecha", "Tipo", "Servidor"}, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
                 return false;
             }
         };
         tblDocumentosPrivados = createStyledTable(modelDocumentosPrivados);
-        tblDocumentosPrivados.getColumnModel().getColumn(6).setCellRenderer(shortIdRenderer);
+        tblDocumentosPrivados.getColumnModel().getColumn(7).setCellRenderer(shortIdRenderer);
 
         rbEnvioTodos = new JRadioButton("Enviar a todos");
         rbEnvioTodos.setSelected(true);
@@ -716,6 +716,24 @@ public class MainFrame extends JFrame {
         appendChat("[SISTEMA] Desconectado del servidor.", TEXT_SECONDARY);
     }
 
+    /**
+     * Etiqueta legible del destino de envío para el chat (todos vs cliente / peer).
+     */
+    private static String formatDestinoLegible(NetworkClient.DestinoEnvio d) {
+        if (d == null || d.todos) {
+            return "Todos (catálogo público)";
+        }
+        String proto = d.destProtocolo != null ? d.destProtocolo : "";
+        String base = d.destIp + ":" + d.destPuerto + " " + proto.trim();
+        if (d.destServidor != null && !d.destServidor.isBlank()
+                && !"local".equalsIgnoreCase(d.destServidor.trim())) {
+            String pid = d.destServidor.trim();
+            String shortPeer = pid.length() > 8 ? pid.substring(0, 8) + "..." : pid;
+            return base + " @peer=" + shortPeer;
+        }
+        return base;
+    }
+
     private NetworkClient.DestinoEnvio leerDestinoEnvio() {
         if (rbEnvioTodos.isSelected()) {
             return NetworkClient.DestinoEnvio.todos();
@@ -759,7 +777,8 @@ public class MainFrame extends JFrame {
         }
 
         txtMensaje.setText("");
-        appendChat("[TÚ] " + texto, new Color(166, 227, 161));
+        String destEtq = formatDestinoLegible(destino);
+        appendChat("[TÚ → " + destEtq + "] " + texto, new Color(166, 227, 161));
 
         CompletableFuture.supplyAsync(() -> {
             try {
@@ -811,14 +830,15 @@ public class MainFrame extends JFrame {
             baseDest = NetworkClient.DestinoEnvio.todos();
         }
 
-        appendChat("[SISTEMA] Enviando " + files.length + " archivo(s)...", TEXT_SECONDARY);
+        String destEtq = formatDestinoLegible(baseDest);
+        appendChat("[SISTEMA] Enviando " + files.length + " archivo(s) → " + destEtq, TEXT_SECONDARY);
 
         progressBar.setVisible(true);
         progressBar.setValue(0);
 
         for (File file : files) {
             long fileSize = file.length();
-            appendChat("  [ENVIO] " + file.getName() + " (" + formatSize(fileSize) + ")", ACCENT);
+            appendChat("  [ENVIO → " + destEtq + "] " + file.getName() + " (" + formatSize(fileSize) + ")", ACCENT);
 
             networkClient.enviarArchivo(file, bytesEnviados -> {
                 SwingUtilities.invokeLater(() -> {
@@ -1090,6 +1110,7 @@ public class MainFrame extends JFrame {
                                     id,
                                     d.getOrDefault("resumen", d.get("nombre")),
                                     d.getOrDefault("remitente", ""),
+                                    d.getOrDefault("destinatario", "—"),
                                     d.getOrDefault("origenServidorEtiqueta", ""),
                                     d.get("fecha"),
                                     d.get("tipo"),
@@ -1121,7 +1142,7 @@ public class MainFrame extends JFrame {
         Object idObj = modelDocumentosPrivados.getValueAt(row, 0);
         long docId = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
         String nombre = modelDocumentosPrivados.getValueAt(row, 1).toString();
-        Object servObj = modelDocumentosPrivados.getValueAt(row, 6);
+        Object servObj = modelDocumentosPrivados.getValueAt(row, 7);
         String servidor = servObj == null ? null : servObj.toString();
         if (servidor != null && servidor.equalsIgnoreCase("local")) {
             servidor = null;
@@ -1313,8 +1334,8 @@ public class MainFrame extends JFrame {
         txtNombre.setEnabled(enabled);
         rbTcp.setEnabled(enabled);
         rbUdp.setEnabled(enabled);
-        rbEnvioTodos.setEnabled(enabled);
-        rbEnvioDirigido.setEnabled(enabled);
+        // Radios de destino (todos / dirigido): siempre habilitados para poder
+        // cambiar el modo de envio con la sesion activa sin reconectar.
     }
 
     private void showError(String msg) {

@@ -392,6 +392,13 @@ public class CommandDispatcher {
         row.put("hash", d.getHashSha256());
         String remNom = d.getRemitenteNombre() != null ? d.getRemitenteNombre() : "";
         row.put("remitente", remNom + " / " + d.getIpPropietario());
+        if (d.getEnvioAlcance() == Documento.EnvioAlcance.DIRIGIDO
+                && d.getDestIp() != null && !d.getDestIp().isBlank()
+                && d.getDestPuerto() != null && d.getDestProtocolo() != null) {
+            row.put("destinatario", d.getDestIp() + ":" + d.getDestPuerto() + " " + d.getDestProtocolo());
+        } else {
+            row.put("destinatario", "—");
+        }
         row.put("origenServidorEtiqueta",
                 d.getOrigenServidorEtiqueta() != null && !d.getOrigenServidorEtiqueta().isBlank()
                         ? d.getOrigenServidorEtiqueta() : "local");
