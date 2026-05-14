@@ -6,6 +6,7 @@ import com.app.server.events.InMemoryEventBuffer;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
 import com.app.server.peer.PeerCatalog;
+import com.app.server.peer.PeerClient;
 import com.app.server.peer.PeerProxyService;
 import com.app.server.peer.PeerRegistry;
 import com.app.server.pool.SemaphoreResourcePool;
@@ -38,6 +39,7 @@ public class ServerCore {
     private final PeerRegistry peerRegistry;
     private final PeerCatalog peerCatalog;
     private final PeerProxyService peerProxy;
+    private final PeerClient peerClient;
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
 
@@ -79,6 +81,19 @@ public class ServerCore {
                       PeerProxyService peerProxy,
                       InMemoryEventBuffer eventBuffer,
                       LogDAO logDAO) {
+        this(tcpPort, udpPort, tcpMax, udpMax, documentoService, logService, eventBus,
+                peerRegistry, peerCatalog, peerProxy, eventBuffer, logDAO, null);
+    }
+
+    public ServerCore(int tcpPort, int udpPort, int tcpMax, int udpMax,
+                      DocumentoService documentoService, LogService logService,
+                      ServerEventBus eventBus,
+                      PeerRegistry peerRegistry,
+                      PeerCatalog peerCatalog,
+                      PeerProxyService peerProxy,
+                      InMemoryEventBuffer eventBuffer,
+                      LogDAO logDAO,
+                      PeerClient peerClient) {
         this.tcpPort = tcpPort;
         this.udpPort = udpPort;
         this.documentoService = documentoService;
@@ -87,6 +102,7 @@ public class ServerCore {
         this.peerRegistry = peerRegistry;
         this.peerCatalog = peerCatalog;
         this.peerProxy = peerProxy;
+        this.peerClient = peerClient;
         this.eventBuffer = eventBuffer;
         this.logDAO = logDAO;
         this.tcpPool = new ClientPool(new SemaphoreResourcePool("tcp-pool", tcpMax), eventBus);
@@ -122,7 +138,7 @@ public class ServerCore {
     private CommandDispatcher nuevoDispatcher() {
         return new CommandDispatcher(
                 documentoService, logService, new ClienteConectadoDAO(), eventBus,
-                peerRegistry, peerCatalog, eventBuffer, logDAO);
+                peerRegistry, peerCatalog, eventBuffer, logDAO, peerClient);
     }
 
     private void runTcp() {

@@ -155,7 +155,7 @@ public class MainFrame extends JFrame {
 
         // --- Tabla de clientes ---
         modelClientes = new DefaultTableModel(
-                new String[]{"IP", "Puerto", "Protocolo", "Conectado desde"}, 0) {
+                new String[]{"IP", "Puerto", "Protocolo", "Conectado desde", "Servidor"}, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
                 return false;
@@ -854,7 +854,8 @@ public class MainFrame extends JFrame {
                                     c.get("puerto") instanceof Number ?
                                             ((Number) c.get("puerto")).intValue() : c.get("puerto"),
                                     c.get("protocolo"),
-                                    c.get("fechaInicio")
+                                    c.get("fechaInicio"),
+                                    c.getOrDefault("servidor", "local")
                             });
                         }
                     } catch (Exception e) {

@@ -45,6 +45,10 @@ public class PeerClient {
         return ejecutarSimple(peer, new Mensaje(Comando.PEER_LISTAR_DOCS));
     }
 
+    public Mensaje listarClientes(PeerInfo peer) throws IOException {
+        return ejecutarSimple(peer, new Mensaje(Comando.PEER_LISTAR_CLIENTES));
+    }
+
     public Mensaje hash(PeerInfo peer, long documentoId) throws IOException {
         return ejecutarSimple(peer, new Mensaje(Comando.PEER_DESCARGAR_HASH).put("documentoId", documentoId));
     }

@@ -10,6 +10,7 @@ import com.app.server.models.ClienteConectado;
 import com.app.server.models.Documento;
 import com.app.server.models.Log;
 import com.app.server.peer.PeerCatalog;
+import com.app.server.peer.PeerClient;
 import com.app.server.peer.PeerInfo;
 import com.app.server.peer.PeerRegistry;
 import com.app.server.service.DocumentoService;
@@ -19,6 +20,9 @@ import com.app.shared.protocol.Mensaje;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import com.google.gson.reflect.TypeToken;
+
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -43,6 +47,7 @@ public class CommandDispatcher {
     private final ServerEventBus eventBus;
     private final PeerRegistry peerRegistry;
     private final PeerCatalog peerCatalog;
+    private final PeerClient peerClient;
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
 
@@ -50,7 +55,7 @@ public class CommandDispatcher {
                              LogService logService,
                              ClienteConectadoDAO clienteDAO,
                              ServerEventBus eventBus) {
-        this(documentoService, logService, clienteDAO, eventBus, null, null, null, null);
+        this(documentoService, logService, clienteDAO, eventBus, null, null, null, null, null);
     }
 
     public CommandDispatcher(DocumentoService documentoService,
@@ -59,7 +64,7 @@ public class CommandDispatcher {
                              ServerEventBus eventBus,
                              PeerRegistry peerRegistry,
                              PeerCatalog peerCatalog) {
-        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, null, null);
+        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, null, null, null);
     }
 
     public CommandDispatcher(DocumentoService documentoService,
@@ -70,12 +75,25 @@ public class CommandDispatcher {
                              PeerCatalog peerCatalog,
                              InMemoryEventBuffer eventBuffer,
                              LogDAO logDAO) {
+        this(documentoService, logService, clienteDAO, eventBus, peerRegistry, peerCatalog, eventBuffer, logDAO, null);
+    }
+
+    public CommandDispatcher(DocumentoService documentoService,
+                             LogService logService,
+                             ClienteConectadoDAO clienteDAO,
+                             ServerEventBus eventBus,
+                             PeerRegistry peerRegistry,
+                             PeerCatalog peerCatalog,
+                             InMemoryEventBuffer eventBuffer,
+                             LogDAO logDAO,
+                             PeerClient peerClient) {
         this.documentoService = documentoService;
         this.logService = logService;
         this.clienteDAO = clienteDAO;
         this.eventBus = eventBus;
         this.peerRegistry = peerRegistry;
         this.peerCatalog = peerCatalog;
+        this.peerClient = peerClient;
         this.eventBuffer = eventBuffer;
         this.logDAO = logDAO;
     }
@@ -133,7 +151,29 @@ public class CommandDispatcher {
                     row.put("puerto", c.getPuerto());
                     row.put("protocolo", c.getProtocolo());
                     row.put("fechaInicio", c.getFechaInicio() != null ? c.getFechaInicio().toString() : null);
+                    row.put("servidor", "local");
                     rows.add(row);
+                }
+                if (peerRegistry != null && peerClient != null) {
+                    Type listType = new TypeToken<List<Map<String, Object>>>() {}.getType();
+                    for (PeerInfo peer : peerRegistry.listarOnline()) {
+                        try {
+                            Mensaje resp = peerClient.listarClientes(peer);
+                            if (resp.getComando() == Comando.RESPUESTA) {
+                                String json = resp.getString("clientes");
+                                if (json != null && !json.isBlank()) {
+                                    List<Map<String, Object>> peerRows = GSON.fromJson(json, listType);
+                                    String label = peer.getNombre() + " (" + peer.getId().substring(0, 8) + ")";
+                                    for (Map<String, Object> row : peerRows) {
+                                        row.put("servidor", label);
+                                        rows.add(row);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            // peer no disponible, se omite
+                        }
+                    }
                 }
                 channel.sendMensaje(Mensaje.respuestaOk("clientes", GSON.toJson(rows))
                         .put("total", rows.size()));
