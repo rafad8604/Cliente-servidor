@@ -1,0 +1,94 @@
+@startuml servidor_clases
+title Servidor - diagrama de clases (núcleo + interfaces)
+
+interface ClientChannel {
+  ..
+  extends Closeable
+}
+
+class TcpClientChannel
+class UdpClientChannel
+
+TcpClientChannel ..|> ClientChannel
+UdpClientChannel ..|> ClientChannel
+
+interface ResourcePool
+class SemaphoreResourcePool
+SemaphoreResourcePool ..|> ResourcePool
+
+interface ServerEventListener
+class InMemoryEventBuffer
+class ConsoleServerEventListener
+InMemoryEventBuffer ..|> ServerEventListener
+ConsoleServerEventListener ..|> ServerEventListener
+
+class ServerEventBus
+class ServerEvent
+enum ServerEventType
+
+ServerEventBus ..> ServerEventListener : notifica
+ServerEvent --> ServerEventType
+
+class ClientPool
+ClientPool o-- ResourcePool
+ClientPool ..> ServerEventBus
+
+class ServerCore
+ServerCore *-- ClientPool : tcpPool
+ServerCore *-- ClientPool : udpPool
+ServerCore ..> DocumentoService
+ServerCore ..> LogService
+ServerCore ..> ServerEventBus
+ServerCore ..> PeerRegistry
+ServerCore ..> PeerCatalog
+ServerCore ..> PeerProxyService
+
+class CommandDispatcher
+class ClientHandler
+class UdpHandler
+
+ClientHandler ..|> Runnable
+ClientHandler ..|> Closeable
+UdpHandler ..|> Runnable
+
+class DocumentoService
+class LogService
+class DocumentoDAO
+class ClienteConectadoDAO
+class LogDAO
+class DatabaseConnection
+
+DocumentoService --> DocumentoDAO
+LogService --> LogDAO
+ClienteConectadoDAO --> DatabaseConnection
+DocumentoDAO --> DatabaseConnection
+LogDAO --> DatabaseConnection
+
+class HttpGateway
+
+class PeerRegistry
+class PeerCatalog
+class PeerClient
+class PeerServer
+class PeerSession
+class PeerDiscoveryService
+class PeerProxyService
+class PeerInfo
+
+PeerSession ..|> Runnable
+
+class Documento
+class DocumentoChunk
+class ClienteConectado
+class Log
+class CryptoUtil <<shared>>
+
+Documento "1" *-- "many" DocumentoChunk
+
+DocumentoService ..> Documento
+DocumentoService ..> CryptoUtil
+
+hide empty members
+skinparam classAttributeIconSize 0
+
+@enduml

@@ -1,0 +1,47 @@
+@startuml cliente_paquetes
+title Cliente - diagrama de paquetes (Java)
+
+package "com.app.client" {
+  [ClientApp]
+}
+
+package "com.app.client.gui" {
+  [MainFrame]
+}
+
+package "com.app.client.dao" {
+  [H2Connection]
+  [HistorialDAO]
+}
+
+package "com.app.client.models" {
+  [HistorialDocumento]
+}
+
+package "com.app.client.net" {
+  [NetworkClient]
+  [ClientDiscoveryService]
+  [DiscoveredServer]
+}
+
+package "com.app.shared (dependencia)" #LightYellow {
+  package "com.app.shared.protocol" {
+    [Comando]
+    [Mensaje]
+  }
+}
+
+com.app.client --> com.app.client.gui : usa
+com.app.client --> com.app.client.dao : init
+
+com.app.client.gui --> com.app.client.net
+com.app.client.gui --> com.app.client.dao
+com.app.client.gui --> com.app.client.models
+com.app.client.gui ..> com.app.shared.protocol : Mensaje, Comando
+
+com.app.client.dao --> com.app.client.models
+com.app.client.dao --> com.app.client.dao : H2Connection singleton
+
+com.app.client.net ..> com.app.shared.protocol
+
+@enduml

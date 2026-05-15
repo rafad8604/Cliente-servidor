@@ -1,0 +1,32 @@
+@startuml servidor_clases_peer
+title Servidor - clases (paquete peer)
+
+hide empty members
+skinparam classAttributeIconSize 0
+
+class PeerRegistry
+class PeerCatalog
+class PeerClient
+class PeerServer
+class PeerSession
+class PeerDiscoveryService
+class PeerProxyService
+
+class PeerInfo
+
+PeerSession ..|> Runnable
+
+PeerCatalog ..> PeerRegistry
+PeerCatalog ..> PeerClient
+PeerProxyService ..> PeerRegistry
+PeerProxyService ..> PeerClient
+PeerServer ..> PeerRegistry
+PeerDiscoveryService ..> PeerRegistry
+
+note bottom of PeerRegistry
+  Conectado con **ServerCore**,
+  **HttpGateway** y **DocumentoService**
+  en el diagrama agregado.
+end note
+
+@enduml

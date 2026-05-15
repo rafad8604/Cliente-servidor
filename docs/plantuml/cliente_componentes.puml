@@ -1,0 +1,29 @@
+@startuml cliente_componentes
+title Cliente - diagrama de componentes (despliegue lógico)
+
+node "JVM (aplicación escritorio)" {
+  component [Módulo GUI\nSwing + FlatLaf] as GUI
+  component [Módulo red\nTCP/UDP + descubrimiento] as NET
+  component [Módulo persistencia local\nDAO + H2] as DAO
+  component [Módulo dominio cliente\nHistorial] as DOM
+  component [Biblioteca compartida\nprotocolo] as SHARED
+}
+
+database "H2\n(historial local)" as H2
+
+GUI --> NET : comandos / chat / archivos
+GUI --> DAO : consultas historial
+DAO --> DOM
+DAO --> H2 : JDBC
+
+NET --> SHARED : serialización Mensaje/Comando
+
+cloud "Servidor de mensajería\n(TCP/UDP)" as SRV
+NET --> SRV : sockets
+
+note right of SHARED
+  Artefacto Maven **shared**
+  (Gson transitivo)
+end note
+
+@enduml

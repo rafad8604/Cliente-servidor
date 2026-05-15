@@ -64,3 +64,6 @@ storage/
 
 # Logs
 *.log
+
+# PlantUML (JAR descargado localmente para renderizar diagramas)
+docs/plantuml/.tools/

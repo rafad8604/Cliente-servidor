@@ -1,0 +1,43 @@
+@startuml servidor_clases_net
+title Servidor - clases (paquete net + pool)
+
+hide empty members
+skinparam classAttributeIconSize 0
+
+interface ClientChannel
+class TcpClientChannel
+class UdpClientChannel
+TcpClientChannel ..|> ClientChannel
+UdpClientChannel ..|> ClientChannel
+
+interface ResourcePool
+class SemaphoreResourcePool
+SemaphoreResourcePool ..|> ResourcePool
+
+class ClientPool
+ClientPool o-- ResourcePool
+
+class ServerCore
+ServerCore *-- ClientPool : tcpPool
+ServerCore *-- ClientPool : udpPool
+
+class CommandDispatcher
+class ClientHandler
+class UdpHandler
+
+ClientHandler ..|> Runnable
+ClientHandler ..|> Closeable
+UdpHandler ..|> Runnable
+
+class ClientContext
+class ClientNameCache
+class DocumentoEnvioHelper
+class BoundedInputStream
+
+ServerCore ..> CommandDispatcher : usa
+note bottom of ServerCore
+  Ver **servidor_clases.puml** para
+  dependencias con servicios y peers.
+end note
+
+@enduml

@@ -1,0 +1,47 @@
+@startuml servidor_componentes
+title Servidor - diagrama de componentes (lógico + externos)
+
+node "JVM (servidor)" {
+  component [Núcleo red\nServerCore + pools TCP/UDP] as CORE
+  component [Capa protocolo / comandos\nCommandDispatcher + handlers] as CMD
+  component [HTTP gateway\nAPI + estáticos] as HTTP
+  component [Módulo P2P / peers\nregistry, catalog, proxy, discovery] as PEER
+  component [Servicios de negocio\nDocumento, Log] as SVC
+  component [Acceso datos\nDAO MySQL] as DAO
+  component [Eventos / SSE buffer] as EVT
+  component [Biblioteca compartida] as SHARED
+}
+
+database "MySQL" as DB
+folder "FS almacenamiento\n(./storage, etc.)" as FS
+
+CORE --> CMD
+CORE --> SVC
+CORE --> EVT
+CORE --> DAO
+CORE --> PEER
+
+HTTP --> SVC
+HTTP --> DAO
+HTTP --> EVT
+HTTP --> PEER
+
+PEER --> SVC
+PEER --> DAO
+PEER --> EVT
+
+SVC --> DAO
+SVC --> FS : archivos cifrados
+SVC --> SHARED : CryptoUtil
+
+DAO --> DB : JDBC
+
+actor "Clientes\nTCP/UDP" as CL
+actor "Navegador\nHTTP" as BR
+actor "Otros servidores\n(peer TCP/UDP)" as P2P
+
+CL --> CORE
+BR --> HTTP
+P2P --> PEER
+
+@enduml

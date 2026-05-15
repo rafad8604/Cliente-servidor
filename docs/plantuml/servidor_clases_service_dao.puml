@@ -1,0 +1,43 @@
+@startuml servidor_clases_service_dao
+title Servidor - clases (service, dao, models, events)
+
+hide empty members
+skinparam classAttributeIconSize 0
+
+interface ServerEventListener
+class InMemoryEventBuffer
+class ConsoleServerEventListener
+InMemoryEventBuffer ..|> ServerEventListener
+ConsoleServerEventListener ..|> ServerEventListener
+
+class ServerEventBus
+class ServerEvent
+enum ServerEventType
+ServerEventBus ..> ServerEventListener : notifica
+ServerEvent --> ServerEventType
+
+class DocumentoService
+class LogService
+class DocumentoDAO
+class ClienteConectadoDAO
+class LogDAO
+class DatabaseConnection
+
+DocumentoService --> DocumentoDAO
+LogService --> LogDAO
+ClienteConectadoDAO --> DatabaseConnection
+DocumentoDAO --> DatabaseConnection
+LogDAO --> DatabaseConnection
+
+class Documento
+class DocumentoChunk
+class ClienteConectado
+class Log
+class CryptoUtil <<shared>>
+
+Documento "1" *-- "many" DocumentoChunk
+DocumentoService ..> Documento
+DocumentoService ..> CryptoUtil
+DocumentoService ..> ServerEventBus
+
+@enduml

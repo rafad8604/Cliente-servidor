@@ -1,0 +1,108 @@
+@startuml servidor_paquetes
+title Servidor - diagrama de paquetes (Java)
+
+package "com.app.server" {
+  [ServerApp]
+}
+
+package "com.app.server.dao" {
+  [DatabaseConnection]
+  [ClienteConectadoDAO]
+  [DocumentoDAO]
+  [LogDAO]
+}
+
+package "com.app.server.events" {
+  [ServerEventBus]
+  [ServerEvent]
+  [ServerEventType]
+  [ServerEventListener]
+  [InMemoryEventBuffer]
+  [ConsoleServerEventListener]
+}
+
+package "com.app.server.http" {
+  [HttpGateway]
+}
+
+package "com.app.server.models" {
+  [Documento]
+  [DocumentoChunk]
+  [ClienteConectado]
+  [Log]
+}
+
+package "com.app.server.net" {
+  [ServerCore]
+  [ClientPool]
+  [ClientHandler]
+  [CommandDispatcher]
+  [ClientChannel]
+  [TcpClientChannel]
+  [UdpClientChannel]
+  [UdpHandler]
+  [ClientContext]
+  [ClientNameCache]
+  [DocumentoEnvioHelper]
+  [BoundedInputStream]
+}
+
+package "com.app.server.peer" {
+  [PeerRegistry]
+  [PeerCatalog]
+  [PeerClient]
+  [PeerServer]
+  [PeerSession]
+  [PeerDiscoveryService]
+  [PeerProxyService]
+  [PeerInfo]
+}
+
+package "com.app.server.pool" {
+  [ResourcePool <<interface>>]
+  [SemaphoreResourcePool]
+}
+
+package "com.app.server.service" {
+  [DocumentoService]
+  [LogService]
+}
+
+package "com.app.server.util" {
+  [NetworkUtils]
+  [SessionLogManager]
+}
+
+package "com.app.shared (dependencia)" #LightYellow {
+  [CryptoUtil]
+  [Comando]
+  [Mensaje]
+}
+
+com.app.server --> com.app.server.dao
+com.app.server --> com.app.server.events
+com.app.server --> com.app.server.http
+com.app.server --> com.app.server.net
+com.app.server --> com.app.server.peer
+com.app.server --> com.app.server.service
+com.app.server --> com.app.shared
+
+com.app.server.net --> com.app.server.service
+com.app.server.net --> com.app.server.events
+com.app.server.net --> com.app.server.dao
+com.app.server.net --> com.app.server.peer
+
+com.app.server.http --> com.app.server.service
+com.app.server.http --> com.app.server.events
+com.app.server.http --> com.app.server.dao
+com.app.server.http --> com.app.server.peer
+
+com.app.server.peer --> com.app.server.service
+com.app.server.peer --> com.app.server.dao
+com.app.server.peer --> com.app.server.events
+
+com.app.server.service --> com.app.server.dao
+com.app.server.service --> com.app.server.events
+com.app.server.service --> com.app.shared
+
+@enduml

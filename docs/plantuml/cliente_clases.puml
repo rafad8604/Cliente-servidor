@@ -1,0 +1,56 @@
+@startuml cliente_clases
+title Cliente - diagrama de clases (simplificado)
+
+class ClientApp {
+  +main(args: String[])
+}
+
+class MainFrame {
+  -networkClient: NetworkClient
+  -discoveryService: ClientDiscoveryService
+  --
+  +MainFrame()
+}
+
+class NetworkClient {
+  ..
+  +implements Closeable
+}
+
+class ClientDiscoveryService
+class DiscoveredServer
+
+class HistorialDAO
+class H2Connection {
+  {static} getInstance(): H2Connection
+  +init(): void
+}
+
+class HistorialDocumento
+
+enum Comando <<shared>>
+class Mensaje <<shared>>
+
+ClientApp ..> MainFrame : crea
+ClientApp ..> H2Connection : init()
+
+MainFrame --|> JFrame
+MainFrame *-- NetworkClient : usa
+MainFrame *-- ClientDiscoveryService : usa
+MainFrame ..> HistorialDAO : usa
+MainFrame ..> HistorialDocumento
+MainFrame ..> Comando
+MainFrame ..> Mensaje
+
+HistorialDAO ..> H2Connection
+HistorialDAO ..> HistorialDocumento : CRUD
+
+NetworkClient ..> Mensaje
+NetworkClient ..> Comando
+
+ClientDiscoveryService ..> DiscoveredServer : produce / filtra
+
+hide members
+show MainFrame members
+
+@enduml
