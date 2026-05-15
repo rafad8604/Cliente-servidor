@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class DocumentoService {
 
     private static final String STORAGE_DIR = "./storage";
-    public static final long MAX_FILE_SIZE = 1024L * 1024L * 1024L; // 1 GB
+    public static final long MAX_FILE_SIZE = 5L * 1024L * 1024L * 1024L; // 5 GB
 
     /**
      * Parametros opcionales de envio dirigido / metadatos de origen y remitente.

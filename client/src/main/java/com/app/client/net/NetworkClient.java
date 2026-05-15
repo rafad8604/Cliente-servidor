@@ -30,6 +30,7 @@ public class NetworkClient implements Closeable {
     public enum Protocolo { TCP, UDP }
 
     private static final int MAX_DATAGRAM_SIZE = 8000;
+    private static final long MAX_FILE_SIZE = 5L * 1024L * 1024L * 1024L; // 5 GB
     private static final int HEADER_SIZE = 9;
     private static final int DATA_PAYLOAD_SIZE = MAX_DATAGRAM_SIZE - HEADER_SIZE;
 
@@ -112,6 +113,10 @@ public class NetworkClient implements Closeable {
     }
 
     public CompletableFuture<Mensaje> enviarArchivo(File file, Consumer<Long> onProgress, DestinoEnvio destino) {
+        if (file.length() > MAX_FILE_SIZE) {
+            Mensaje err = Mensaje.error("El archivo supera el limite maximo de 5 GB (" + file.length() + " bytes)");
+            return CompletableFuture.completedFuture(err);
+        }
         return CompletableFuture.supplyAsync(() -> {
             try {
                 return (protocolo == Protocolo.TCP)
