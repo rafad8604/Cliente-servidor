@@ -471,7 +471,7 @@ public class CommandDispatcher {
                         ? d.getOrigenServidorEtiqueta() : selfLabel);
         row.put("fecha", d.getFechaCreacion() != null ? d.getFechaCreacion().toString() : null);
         row.put("origen", selfLabel);
-        row.put("servidor", selfLabel);
+        row.put("servidor", "local");
         return row;
     }
 
