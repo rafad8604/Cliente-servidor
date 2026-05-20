@@ -294,7 +294,49 @@ public class ClientHandler implements Runnable, Closeable {
             return;
         }
 
-        if (peerProxy.getRegistry().getById(peerId).isEmpty()) {
+        boolean peerOffline = peerProxy.getRegistry().getById(peerId).isEmpty();
+        if (!peerOffline) {
+            try (PeerClient.PeerDownload download = peerProxy.descargar(peerId, docId)) {
+                channel.sendMensaje(Mensaje.respuestaOk()
+                        .put("nombre", download.getNombre())
+                        .put("tamano", download.getTamano())
+                        .put("hash", download.getHash())
+                        .put("tipoDescarga", "ORIGINAL")
+                        .put("origen", "remoto")
+                        .put("servidor", peerId));
+
+                byte[] buffer = new byte[8192];
+                long remaining = download.getTamano();
+                long total = 0;
+                InputStream src = download.getStream();
+                while (remaining > 0) {
+                    int toRead = (int) Math.min(buffer.length, remaining);
+                    int n = src.read(buffer, 0, toRead);
+                    if (n == -1) break;
+                    channel.sendBytes(buffer, 0, n);
+                    total += n;
+                    remaining -= n;
+                }
+                channel.flush();
+                if (logService != null) {
+                    logService.logDescarga(ctx.getIp(),
+                            download.getNombre() + " @peer=" + peerId.substring(0, Math.min(8, peerId.length())),
+                            "ORIGINAL_PROXY");
+                }
+                if (total != download.getTamano()) {
+                    throw new IOException("Proxy incompleto: enviados=" + total + " esperado=" + download.getTamano());
+                }
+                return;
+            } catch (IOException e) {
+                if (isPeerUnavailableError(e)) {
+                    peerOffline = true;
+                } else {
+                    throw e;
+                }
+            }
+        }
+
+        if (peerOffline) {
             if (pendingQueue != null) {
                 pendingQueue.enqueue(docId, peerId, ctx);
             }
@@ -306,40 +348,32 @@ public class ClientHandler implements Runnable, Closeable {
                     .put("servidor", serverName)
                     .put("mensaje", "Su peticion esta en cola, el servidor \""
                             + serverName + "\" esta desconectado"));
-            return;
         }
+    }
 
-        try (PeerClient.PeerDownload download = peerProxy.descargar(peerId, docId)) {
-            channel.sendMensaje(Mensaje.respuestaOk()
-                    .put("nombre", download.getNombre())
-                    .put("tamano", download.getTamano())
-                    .put("hash", download.getHash())
-                    .put("tipoDescarga", "ORIGINAL")
-                    .put("origen", "remoto")
-                    .put("servidor", peerId));
-
-            byte[] buffer = new byte[8192];
-            long remaining = download.getTamano();
-            long total = 0;
-            InputStream src = download.getStream();
-            while (remaining > 0) {
-                int toRead = (int) Math.min(buffer.length, remaining);
-                int n = src.read(buffer, 0, toRead);
-                if (n == -1) break;
-                channel.sendBytes(buffer, 0, n);
-                total += n;
-                remaining -= n;
-            }
-            channel.flush();
-            if (logService != null) {
-                logService.logDescarga(ctx.getIp(),
-                        download.getNombre() + " @peer=" + peerId.substring(0, Math.min(8, peerId.length())),
-                        "ORIGINAL_PROXY");
-            }
-            if (total != download.getTamano()) {
-                throw new IOException("Proxy incompleto: enviados=" + total + " esperado=" + download.getTamano());
+    private boolean isPeerUnavailableError(Throwable t) {
+        if (t == null) {
+            return false;
+        }
+        if (t instanceof IOException) {
+            String msg = t.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase();
+                if (lower.contains("peer no disponible")
+                        || lower.contains("connection refused")
+                        || lower.contains("connection reset")
+                        || lower.contains("connection reset by peer")
+                        || lower.contains("connect timed out")
+                        || lower.contains("timed out")
+                        || lower.contains("no route to host")
+                        || lower.contains("conexion peer cerrada inesperadamente")
+                        || lower.contains("respuesta vacia del peer")
+                        || lower.contains("socket closed")) {
+                    return true;
+                }
             }
         }
+        return isPeerUnavailableError(t.getCause());
     }
 
     private boolean esRemoto(String servidor) {

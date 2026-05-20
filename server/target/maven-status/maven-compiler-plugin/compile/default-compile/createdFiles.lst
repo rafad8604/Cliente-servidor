@@ -1,6 +1,7 @@
 com\app\server\util\SessionLogManager.class
 com\app\server\events\InMemoryEventBuffer.class
 com\app\server\net\CommandDispatcher$3.class
+com\app\server\queue\PendingDownloadQueueService.class
 com\app\server\dao\DocumentoDAO$StoredChunk.class
 com\app\server\events\ServerEventBus.class
 com\app\server\peer\PeerDiscoveryService$1.class
@@ -15,6 +16,7 @@ com\app\server\service\DocumentoService.class
 com\app\server\net\ClientHandler.class
 com\app\server\dao\LogDAO.class
 com\app\server\service\DocumentoService$DocumentoEnvioParams.class
+com\app\server\queue\PendingDownloadRequest.class
 com\app\server\net\ClientNameCache.class
 com\app\server\net\ClientHandler$1.class
 com\app\server\pool\SemaphoreResourcePool.class
