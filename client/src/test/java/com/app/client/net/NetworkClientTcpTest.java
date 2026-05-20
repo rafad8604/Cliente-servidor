@@ -1,18 +1,28 @@
 package com.app.client.net;
 
-import com.app.shared.protocol.Comando;
-import com.app.shared.protocol.Mensaje;
-import org.junit.jupiter.api.Test;
-
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
+
+import com.app.shared.protocol.Comando;
+import com.app.shared.protocol.Mensaje;
 
 class NetworkClientTcpTest {
 
@@ -142,6 +152,48 @@ class NetworkClientTcpTest {
                 Exception ex = assertThrows(Exception.class, () -> client.descargarArchivo(1L, destino, null));
                 String msg = ex.getMessage() == null ? "" : ex.getMessage();
                 assertTrue(msg.contains("incompleta") || msg.contains("incompleto") || msg.contains("faltan"));
+            } finally {
+                client.close();
+            }
+
+            serverTask.get(5, TimeUnit.SECONDS);
+        } finally {
+            destino.delete();
+        }
+    }
+
+    @Test
+    void descargaArchivoTcpServidorDesconectadoDevuelveEnCola() throws Exception {
+        File destino = File.createTempFile("download-cola", ".txt");
+
+        try (ServerSocket server = new ServerSocket(0)) {
+            int port = server.getLocalPort();
+            CompletableFuture<Void> serverTask = CompletableFuture.runAsync(() -> {
+                try (Socket s = server.accept()) {
+                    InputStream in = s.getInputStream();
+                    OutputStream out = s.getOutputStream();
+
+                    enviarLinea(out, new Mensaje(Comando.SESION_INFO).put("status", "CONECTADO").toJson());
+                    leerLinea(in); // DESCARGAR_ARCHIVO
+
+                    enviarLinea(out, Mensaje.respuestaOk()
+                            .put("encolada", true)
+                            .put("servidor", "peer-A")
+                            .put("mensaje", "Su peticion esta en cola, el servidor \"peer-A\" esta desconectado")
+                            .toJson());
+                } catch (Exception e) {
+                    throw new CompletionException(e);
+                }
+            });
+
+            NetworkClient client = new NetworkClient("127.0.0.1", port, NetworkClient.Protocolo.TCP);
+            try {
+                client.conectar();
+                NetworkClient.DownloadQueuedException ex = assertThrows(
+                        NetworkClient.DownloadQueuedException.class,
+                        () -> client.descargarArchivo(1L, destino, null));
+                assertTrue(ex.getMessage().contains("Su peticion esta en cola"));
+                assertTrue(ex.getMessage().contains("servidor \"peer-A\""));
             } finally {
                 client.close();
             }

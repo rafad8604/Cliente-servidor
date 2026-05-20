@@ -1,5 +1,10 @@
 package com.app.server.net;
 
+import java.io.IOException;
+import java.net.DatagramSocket;
+import java.net.ServerSocket;
+import java.net.Socket;
+
 import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.dao.LogDAO;
 import com.app.server.events.InMemoryEventBuffer;
@@ -10,13 +15,9 @@ import com.app.server.peer.PeerClient;
 import com.app.server.peer.PeerProxyService;
 import com.app.server.peer.PeerRegistry;
 import com.app.server.pool.SemaphoreResourcePool;
+import com.app.server.queue.PendingDownloadQueueService;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
-
-import java.io.IOException;
-import java.net.DatagramSocket;
-import java.net.ServerSocket;
-import java.net.Socket;
 
 /**
  * Nucleo del servidor.
@@ -42,6 +43,7 @@ public class ServerCore {
     private final PeerClient peerClient;
     private final InMemoryEventBuffer eventBuffer;
     private final LogDAO logDAO;
+    private final PendingDownloadQueueService pendingDownloadQueueService;
     private final ClientNameCache nameCache = new ClientNameCache();
 
     private ServerSocket tcpServer;
@@ -95,6 +97,20 @@ public class ServerCore {
                       InMemoryEventBuffer eventBuffer,
                       LogDAO logDAO,
                       PeerClient peerClient) {
+        this(tcpPort, udpPort, tcpMax, udpMax, documentoService, logService, eventBus,
+            peerRegistry, peerCatalog, peerProxy, eventBuffer, logDAO, peerClient, null);
+        }
+
+        public ServerCore(int tcpPort, int udpPort, int tcpMax, int udpMax,
+                  DocumentoService documentoService, LogService logService,
+                  ServerEventBus eventBus,
+                  PeerRegistry peerRegistry,
+                  PeerCatalog peerCatalog,
+                  PeerProxyService peerProxy,
+                  InMemoryEventBuffer eventBuffer,
+                  LogDAO logDAO,
+                  PeerClient peerClient,
+                  PendingDownloadQueueService pendingDownloadQueueService) {
         this.tcpPort = tcpPort;
         this.udpPort = udpPort;
         this.documentoService = documentoService;
@@ -106,6 +122,7 @@ public class ServerCore {
         this.peerClient = peerClient;
         this.eventBuffer = eventBuffer;
         this.logDAO = logDAO;
+        this.pendingDownloadQueueService = pendingDownloadQueueService;
         this.tcpPool = new ClientPool(new SemaphoreResourcePool("tcp-pool", tcpMax), eventBus);
         this.udpPool = new ClientPool(new SemaphoreResourcePool("udp-pool", udpMax), eventBus);
     }
@@ -153,7 +170,7 @@ public class ServerCore {
                     TcpClientChannel channel = new TcpClientChannel(clientSocket);
                     ClientHandler handler = new ClientHandler(channel, tcpPool,
                             documentoService, logService, eventBus,
-                            nuevoDispatcher(), peerProxy);
+                            nuevoDispatcher(), peerProxy, pendingDownloadQueueService);
                     tcpPool.registerHandler(handler);
 
                     if (eventBus != null) {

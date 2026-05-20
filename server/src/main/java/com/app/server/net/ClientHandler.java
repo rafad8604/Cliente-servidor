@@ -1,5 +1,13 @@
 package com.app.server.net;
 
+import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+
 import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
@@ -8,14 +16,11 @@ import com.app.server.models.Documento;
 import com.app.server.peer.PeerClient;
 import com.app.server.peer.PeerInfo;
 import com.app.server.peer.PeerProxyService;
+import com.app.server.queue.PendingDownloadQueueService;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
 import com.app.shared.protocol.Comando;
 import com.app.shared.protocol.Mensaje;
-
-import java.io.*;
-import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Maneja una conexion TCP individual.
@@ -34,20 +39,22 @@ public class ClientHandler implements Runnable, Closeable {
     private final CommandDispatcher dispatcher;
     private final ServerEventBus eventBus;
     private final PeerProxyService peerProxy;
+    private final PendingDownloadQueueService pendingQueue;
     private final ClientContext ctx;
     private volatile boolean running = true;
 
     public ClientHandler(TcpClientChannel channel, ClientPool pool,
                          DocumentoService documentoService, LogService logService,
                          ServerEventBus eventBus) {
-        this(channel, pool, documentoService, logService, eventBus, null, null);
+        this(channel, pool, documentoService, logService, eventBus, null, null, null);
     }
 
     public ClientHandler(TcpClientChannel channel, ClientPool pool,
                          DocumentoService documentoService, LogService logService,
                          ServerEventBus eventBus,
                          CommandDispatcher dispatcher,
-                         PeerProxyService peerProxy) {
+                         PeerProxyService peerProxy,
+                         PendingDownloadQueueService pendingQueue) {
         this.channel = channel;
         this.pool = pool;
         this.documentoService = documentoService;
@@ -55,6 +62,7 @@ public class ClientHandler implements Runnable, Closeable {
         this.clienteDAO = new ClienteConectadoDAO();
         this.eventBus = eventBus;
         this.peerProxy = peerProxy;
+                this.pendingQueue = pendingQueue;
         this.dispatcher = dispatcher != null
                 ? dispatcher
                 : new CommandDispatcher(documentoService, logService, clienteDAO, eventBus);
@@ -285,6 +293,22 @@ public class ClientHandler implements Runnable, Closeable {
             channel.sendMensaje(Mensaje.error("Proxy a peers no disponible en este servidor"));
             return;
         }
+
+        if (peerProxy.getRegistry().getById(peerId).isEmpty()) {
+            if (pendingQueue != null) {
+                pendingQueue.enqueue(docId, peerId, ctx);
+            }
+            String serverName = pendingQueue != null
+                    ? pendingQueue.resolveServerDisplayName(peerId)
+                    : peerId.substring(0, Math.min(8, peerId.length()));
+            channel.sendMensaje(Mensaje.respuestaOk()
+                    .put("encolada", true)
+                    .put("servidor", serverName)
+                    .put("mensaje", "Su peticion esta en cola, el servidor \""
+                            + serverName + "\" esta desconectado"));
+            return;
+        }
+
         try (PeerClient.PeerDownload download = peerProxy.descargar(peerId, docId)) {
             channel.sendMensaje(Mensaje.respuestaOk()
                     .put("nombre", download.getNombre())

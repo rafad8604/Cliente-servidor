@@ -1,5 +1,11 @@
 package com.app.server;
 
+import java.net.InetAddress;
+import java.util.Scanner;
+import java.util.UUID;
+
+import javax.crypto.SecretKey;
+
 import com.app.server.dao.ClienteConectadoDAO;
 import com.app.server.dao.DatabaseConnection;
 import com.app.server.dao.LogDAO;
@@ -8,8 +14,8 @@ import com.app.server.events.InMemoryEventBuffer;
 import com.app.server.events.ServerEvent;
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
-import com.app.server.models.Log;
 import com.app.server.http.HttpGateway;
+import com.app.server.models.Log;
 import com.app.server.net.ServerCore;
 import com.app.server.peer.PeerCatalog;
 import com.app.server.peer.PeerClient;
@@ -18,16 +24,12 @@ import com.app.server.peer.PeerInfo;
 import com.app.server.peer.PeerProxyService;
 import com.app.server.peer.PeerRegistry;
 import com.app.server.peer.PeerServer;
+import com.app.server.queue.PendingDownloadQueueService;
 import com.app.server.service.DocumentoService;
 import com.app.server.service.LogService;
 import com.app.server.util.NetworkUtils;
 import com.app.server.util.SessionLogManager;
 import com.app.shared.util.CryptoUtil;
-
-import javax.crypto.SecretKey;
-import java.net.InetAddress;
-import java.util.Scanner;
-import java.util.UUID;
 
 /**
  * Punto de entrada del servidor.
@@ -104,6 +106,7 @@ public class ServerApp {
         PeerServer peerServer = null;
         PeerDiscoveryService discovery = null;
         PeerCatalog peerCatalog = null;
+        PendingDownloadQueueService pendingQueueService = null;
 
         try {
             System.out.println("[INIT] Conectando a MySQL...");
@@ -130,6 +133,8 @@ public class ServerApp {
                 peerClient = new PeerClient(selfInfo);
                 peerCatalog = new PeerCatalog(peerRegistry, peerClient, eventBus);
                 peerProxy = new PeerProxyService(peerRegistry, peerClient, eventBus);
+                pendingQueueService = new PendingDownloadQueueService(peerProxy, eventBus);
+                pendingQueueService.start();
 
                 LogDAO peerLogDAO = new LogDAO();
                 String selfLabel = nombre + " (" + host + ")";
@@ -155,7 +160,7 @@ public class ServerApp {
                     parsed.maxClients, parsed.maxClients,
                     documentoService, logService, eventBus,
                     peerRegistry, peerCatalog, peerProxy,
-                    eventBuffer, logDAO, peerClient);
+                    eventBuffer, logDAO, peerClient, pendingQueueService);
             server.start();
 
             httpGateway = new HttpGateway(parsed.httpPort, documentoService, logService,
@@ -189,6 +194,7 @@ public class ServerApp {
             try { if (peerCatalog != null) peerCatalog.stop(); } catch (Exception ignored) { }
             try { if (discovery != null) discovery.stop(); } catch (Exception ignored) { }
             try { if (peerServer != null) peerServer.stop(); } catch (Exception ignored) { }
+            try { if (pendingQueueService != null) pendingQueueService.close(); } catch (Exception ignored) { }
             try { DatabaseConnection.getInstance().shutdown(); } catch (Exception ignored) { }
             try {
                 eventBus.publish(ServerEventType.SERVIDOR_DETENIDO, "ServerApp", "shutdown");

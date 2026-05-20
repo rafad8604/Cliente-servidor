@@ -1,18 +1,34 @@
 package com.app.client.net;
 
-import com.app.shared.protocol.Comando;
-import com.app.shared.protocol.Mensaje;
-
-import java.io.*;
-import java.net.*;
+import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.TreeMap;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+
+import com.app.shared.protocol.Comando;
+import com.app.shared.protocol.Mensaje;
 
 /**
  * Cliente de red TCP/UDP. El protocolo se selecciona al conectar.
@@ -26,6 +42,12 @@ import java.util.function.Consumer;
  * </ul>
  */
 public class NetworkClient implements Closeable {
+
+    public static class DownloadQueuedException extends IOException {
+        public DownloadQueuedException(String message) {
+            super(message);
+        }
+    }
 
     public enum Protocolo { TCP, UDP }
 
@@ -325,6 +347,15 @@ public class NetworkClient implements Closeable {
             if (header.getComando() == Comando.ERROR) {
                 throw new IOException("Error: " + header.getString("detalle"));
             }
+
+            if (header.getDatos().containsKey("encolada") && header.getBoolean("encolada")) {
+                String mensaje = header.getString("mensaje");
+                if (mensaje == null || mensaje.isBlank()) {
+                    mensaje = "Su peticion esta en cola";
+                }
+                throw new DownloadQueuedException(mensaje);
+            }
+
             long tamano = header.getLong("tamano");
 
             try (FileOutputStream fos = new FileOutputStream(destino)) {

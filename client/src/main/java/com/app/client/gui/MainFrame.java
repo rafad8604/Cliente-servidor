@@ -1,29 +1,59 @@
 package com.app.client.gui;
 
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Cursor;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Image;
+import java.awt.RenderingHints;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.File;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
+import javax.swing.JButton;
+import javax.swing.JFileChooser;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JProgressBar;
+import javax.swing.JRadioButton;
+import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
+import javax.swing.JTabbedPane;
+import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.WindowConstants;
+import javax.swing.border.Border;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
+
 import com.app.client.dao.HistorialDAO;
 import com.app.client.models.HistorialDocumento;
 import com.app.client.net.ClientDiscoveryService;
 import com.app.client.net.DiscoveredServer;
 import com.app.client.net.NetworkClient;
-import com.app.shared.protocol.Comando;
-import com.app.shared.protocol.Mensaje;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-
-import javax.swing.*;
-import javax.swing.border.*;
-import javax.swing.table.DefaultTableModel;
-import javax.swing.table.DefaultTableCellRenderer;
-import java.awt.*;
-import java.awt.event.*;
-import java.io.File;
-
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * Interfaz gráfica principal del cliente de mensajería.
@@ -1211,7 +1241,12 @@ public class MainFrame extends JFrame {
             });
         }).exceptionally(ex -> {
             SwingUtilities.invokeLater(() -> {
-                appendChat("  [ERROR] Descarga privada: " + ex.getCause().getMessage(), ERROR_COLOR);
+                Throwable root = unwrapThrowable(ex);
+                if (root instanceof NetworkClient.DownloadQueuedException) {
+                    appendChat("  [COLA] " + root.getMessage(), new Color(249, 226, 175));
+                } else {
+                    appendChat("  [ERROR] Descarga privada: " + root.getMessage(), ERROR_COLOR);
+                }
                 progressBar.setVisible(false);
             });
             return null;
@@ -1317,7 +1352,12 @@ public class MainFrame extends JFrame {
             });
         }).exceptionally(ex -> {
             SwingUtilities.invokeLater(() -> {
-                appendChat("  [ERROR] Error descargando: " + ex.getCause().getMessage(), ERROR_COLOR);
+                Throwable root = unwrapThrowable(ex);
+                if (root instanceof NetworkClient.DownloadQueuedException) {
+                    appendChat("  [COLA] " + root.getMessage(), new Color(249, 226, 175));
+                } else {
+                    appendChat("  [ERROR] Error descargando: " + root.getMessage(), ERROR_COLOR);
+                }
                 progressBar.setVisible(false);
             });
             return null;
@@ -1334,6 +1374,14 @@ public class MainFrame extends JFrame {
             // Auto-scroll
             txtChat.setCaretPosition(txtChat.getDocument().getLength());
         });
+    }
+
+    private Throwable unwrapThrowable(Throwable error) {
+        Throwable current = error;
+        while (current != null && current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current != null ? current : new RuntimeException("Error desconocido");
     }
 
     private void setInputsEnabled(boolean enabled) {
