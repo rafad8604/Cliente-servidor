@@ -2,6 +2,8 @@ package com.app.server.queue;
 
 import java.time.Instant;
 
+import com.app.server.net.ClientHandler;
+
 /**
  * Solicitud de descarga en espera mientras un peer remoto esta desconectado.
  */
@@ -9,22 +11,16 @@ public final class PendingDownloadRequest {
 
     private final long documentoId;
     private final String peerId;
-    private final String clienteIp;
-    private final int clientePuerto;
-    private final String clienteProtocolo;
+    private final ClientHandler handler;
     private final Instant encoladaEn;
     private int intentos;
 
     public PendingDownloadRequest(long documentoId,
                                   String peerId,
-                                  String clienteIp,
-                                  int clientePuerto,
-                                  String clienteProtocolo) {
+                                  ClientHandler handler) {
         this.documentoId = documentoId;
         this.peerId = peerId;
-        this.clienteIp = clienteIp;
-        this.clientePuerto = clientePuerto;
-        this.clienteProtocolo = clienteProtocolo;
+        this.handler = handler;
         this.encoladaEn = Instant.now();
         this.intentos = 0;
     }
@@ -37,16 +33,8 @@ public final class PendingDownloadRequest {
         return peerId;
     }
 
-    public String getClienteIp() {
-        return clienteIp;
-    }
-
-    public int getClientePuerto() {
-        return clientePuerto;
-    }
-
-    public String getClienteProtocolo() {
-        return clienteProtocolo;
+    public ClientHandler getHandler() {
+        return handler;
     }
 
     public Instant getEncoladaEn() {

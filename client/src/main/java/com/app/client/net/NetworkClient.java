@@ -283,8 +283,23 @@ public class NetworkClient implements Closeable {
      */
     public void descargarArchivo(long documentoId, String servidor, File destino, Consumer<Long> onProgress)
             throws Exception {
+        descargarArchivo(documentoId, servidor, destino, onProgress, null, null);
+    }
+
+    public void descargarArchivo(long documentoId, String servidor, File destino,
+                                  Consumer<Long> onProgress,
+                                  Consumer<String> onQueuedMessage)
+            throws Exception {
+        descargarArchivo(documentoId, servidor, destino, onProgress, onQueuedMessage, null);
+    }
+
+    public void descargarArchivo(long documentoId, String servidor, File destino,
+                                  Consumer<Long> onProgress,
+                                  Consumer<String> onQueuedMessage,
+                                  Runnable onResume)
+            throws Exception {
         if (protocolo == Protocolo.TCP) {
-            descargarArchivoTcp(documentoId, servidor, destino, onProgress, Comando.DESCARGAR_ARCHIVO);
+            descargarArchivoTcp(documentoId, servidor, destino, onProgress, onQueuedMessage, onResume, Comando.DESCARGAR_ARCHIVO);
         } else {
             descargarArchivoUdp(documentoId, destino, onProgress, Comando.DESCARGAR_ARCHIVO);
         }
@@ -336,7 +351,9 @@ public class NetworkClient implements Closeable {
     }
 
     private void descargarArchivoTcp(long documentoId, String servidor,
-                                     File destino, Consumer<Long> onProgress, Comando comando)
+                                     File destino, Consumer<Long> onProgress,
+                                     Consumer<String> onQueuedMessage,
+                                     Runnable onResume, Comando comando)
             throws Exception {
         synchronized (tcpRequestLock) {
             Mensaje msg = new Mensaje(comando).put("documentoId", documentoId);
@@ -348,12 +365,22 @@ public class NetworkClient implements Closeable {
                 throw new IOException("Error: " + header.getString("detalle"));
             }
 
-            if (header.getDatos().containsKey("encolada") && header.getBoolean("encolada")) {
+            boolean wasQueued = false;
+            while (header.getDatos().containsKey("encolada") && header.getBoolean("encolada")) {
+                wasQueued = true;
                 String mensaje = header.getString("mensaje");
                 if (mensaje == null || mensaje.isBlank()) {
                     mensaje = "Su peticion esta en cola";
                 }
+                if (onQueuedMessage != null) {
+                    onQueuedMessage.accept(mensaje);
+                    header = esperarRespuestaTcp();
+                    continue;
+                }
                 throw new DownloadQueuedException(mensaje);
+            }
+            if (wasQueued && onResume != null) {
+                onResume.run();
             }
 
             long tamano = header.getLong("tamano");

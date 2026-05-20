@@ -1223,7 +1223,10 @@ public class MainFrame extends JFrame {
                     SwingUtilities.invokeLater(() -> {
                         lblProgress.setText(formatSize(bytesRecibidos) + " recibidos");
                     });
-                });
+                }, mensaje -> SwingUtilities.invokeLater(() ->
+                        appendChat("  [COLA] " + mensaje, new Color(249, 226, 175))),
+                () -> SwingUtilities.invokeLater(() ->
+                        appendChat("  [REINTENTO] Reentrega automática iniciada", new Color(166, 227, 161))));
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -1319,7 +1322,10 @@ public class MainFrame extends JFrame {
                         SwingUtilities.invokeLater(() -> {
                             lblProgress.setText(formatSize(bytesRecibidos) + " recibidos");
                         });
-                    });
+                    }, mensaje -> SwingUtilities.invokeLater(() ->
+                            appendChat("  [COLA] " + mensaje, new Color(249, 226, 175))),
+                    () -> SwingUtilities.invokeLater(() ->
+                            appendChat("  [REINTENTO] Reentrega automática iniciada", new Color(166, 227, 161))));
                 } else {
                     networkClient.descargarEncriptado(docId, destino, bytesRecibidos -> {
                         SwingUtilities.invokeLater(() -> {

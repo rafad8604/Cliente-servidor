@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.app.server.events.ServerEventBus;
 import com.app.server.events.ServerEventType;
-import com.app.server.net.ClientContext;
+import com.app.server.net.ClientHandler;
 import com.app.server.peer.PeerInfo;
 import com.app.server.peer.PeerProxyService;
 
@@ -47,19 +47,14 @@ public class PendingDownloadQueueService implements AutoCloseable {
                 TimeUnit.SECONDS);
     }
 
-    public void enqueue(long documentoId, String peerId, ClientContext ctx) {
-        PendingDownloadRequest req = new PendingDownloadRequest(
-                documentoId,
-                peerId,
-                ctx.getIp(),
-                ctx.getPort(),
-                ctx.getProtocol());
+    public void enqueue(long documentoId, String peerId, ClientHandler handler) {
+        PendingDownloadRequest req = new PendingDownloadRequest(documentoId, peerId, handler);
         byPeer.computeIfAbsent(peerId, ignored -> new ConcurrentLinkedQueue<>()).offer(req);
         if (eventBus != null) {
             eventBus.publish(ServerEventType.PEER_ERROR,
                     "pending-download-queue",
                     "encolada docId=" + documentoId + " peer=" + shortPeer(peerId)
-                            + " cliente=" + ctx);
+                            + " cliente=" + handler.getContext());
         }
     }
 
@@ -109,16 +104,24 @@ public class PendingDownloadQueueService implements AutoCloseable {
         while ((req = queue.poll()) != null) {
             try {
                 req.incrementarIntentos();
-                // Verifica que el documento remoto este accesible.
-                peerProxy.hash(peerId, req.getDocumentoId());
                 if (eventBus != null) {
                     eventBus.publish(ServerEventType.PEER_DESCARGA_PROXY,
                             "pending-download-queue",
-                            "lista para reintento docId=" + req.getDocumentoId()
+                            "reintentando docId=" + req.getDocumentoId()
                                     + " peer=" + shortPeer(peerId)
-                                    + " cliente=" + req.getClienteIp() + ":" + req.getClientePuerto());
+                                    + " cliente=" + req.getHandler().getContext());
                 }
+                req.getHandler().retryQueuedDownload(req.getDocumentoId(), peerId);
             } catch (Exception e) {
+                if (!req.getHandler().isActive()) {
+                    if (eventBus != null) {
+                        eventBus.publish(ServerEventType.PEER_ERROR,
+                                "pending-download-queue",
+                                "cliente desconectado, descartando solicitud docId=" + req.getDocumentoId()
+                                        + " peer=" + shortPeer(peerId));
+                    }
+                    continue;
+                }
                 if (req.getIntentos() < MAX_REINTENTOS) {
                     queue.offer(req);
                 } else if (eventBus != null) {

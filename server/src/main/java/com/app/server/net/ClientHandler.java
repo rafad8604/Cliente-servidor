@@ -294,61 +294,74 @@ public class ClientHandler implements Runnable, Closeable {
             return;
         }
 
-        boolean peerOffline = peerProxy.getRegistry().getById(peerId).isEmpty();
-        if (!peerOffline) {
-            try (PeerClient.PeerDownload download = peerProxy.descargar(peerId, docId)) {
+        try {
+            realizarDescargaProxy(docId, peerId);
+        } catch (IOException e) {
+            if (isPeerUnavailableError(e)) {
+                if (pendingQueue != null) {
+                    pendingQueue.enqueue(docId, peerId, this);
+                }
+                String serverName = pendingQueue != null
+                        ? pendingQueue.resolveServerDisplayName(peerId)
+                        : peerId.substring(0, Math.min(8, peerId.length()));
                 channel.sendMensaje(Mensaje.respuestaOk()
-                        .put("nombre", download.getNombre())
-                        .put("tamano", download.getTamano())
-                        .put("hash", download.getHash())
-                        .put("tipoDescarga", "ORIGINAL")
-                        .put("origen", "remoto")
-                        .put("servidor", peerId));
-
-                byte[] buffer = new byte[8192];
-                long remaining = download.getTamano();
-                long total = 0;
-                InputStream src = download.getStream();
-                while (remaining > 0) {
-                    int toRead = (int) Math.min(buffer.length, remaining);
-                    int n = src.read(buffer, 0, toRead);
-                    if (n == -1) break;
-                    channel.sendBytes(buffer, 0, n);
-                    total += n;
-                    remaining -= n;
-                }
-                channel.flush();
-                if (logService != null) {
-                    logService.logDescarga(ctx.getIp(),
-                            download.getNombre() + " @peer=" + peerId.substring(0, Math.min(8, peerId.length())),
-                            "ORIGINAL_PROXY");
-                }
-                if (total != download.getTamano()) {
-                    throw new IOException("Proxy incompleto: enviados=" + total + " esperado=" + download.getTamano());
-                }
+                        .put("encolada", true)
+                        .put("servidor", serverName)
+                        .put("mensaje", "Su peticion esta en cola, el servidor \""
+                                + serverName + "\" esta desconectado"));
                 return;
-            } catch (IOException e) {
-                if (isPeerUnavailableError(e)) {
-                    peerOffline = true;
-                } else {
-                    throw e;
-                }
             }
+            throw e;
         }
+    }
 
-        if (peerOffline) {
-            if (pendingQueue != null) {
-                pendingQueue.enqueue(docId, peerId, ctx);
-            }
-            String serverName = pendingQueue != null
-                    ? pendingQueue.resolveServerDisplayName(peerId)
-                    : peerId.substring(0, Math.min(8, peerId.length()));
+    private void realizarDescargaProxy(long docId, String peerId) throws Exception {
+        try (PeerClient.PeerDownload download = peerProxy.descargar(peerId, docId)) {
             channel.sendMensaje(Mensaje.respuestaOk()
-                    .put("encolada", true)
-                    .put("servidor", serverName)
-                    .put("mensaje", "Su peticion esta en cola, el servidor \""
-                            + serverName + "\" esta desconectado"));
+                    .put("nombre", download.getNombre())
+                    .put("tamano", download.getTamano())
+                    .put("hash", download.getHash())
+                    .put("tipoDescarga", "ORIGINAL")
+                    .put("origen", "remoto")
+                    .put("servidor", peerId));
+
+            byte[] buffer = new byte[8192];
+            long remaining = download.getTamano();
+            long total = 0;
+            InputStream src = download.getStream();
+            while (remaining > 0) {
+                int toRead = (int) Math.min(buffer.length, remaining);
+                int n = src.read(buffer, 0, toRead);
+                if (n == -1) break;
+                channel.sendBytes(buffer, 0, n);
+                total += n;
+                remaining -= n;
+            }
+            channel.flush();
+            if (logService != null) {
+                logService.logDescarga(ctx.getIp(),
+                        download.getNombre() + " @peer=" + peerId.substring(0, Math.min(8, peerId.length())),
+                        "ORIGINAL_PROXY");
+            }
+            if (total != download.getTamano()) {
+                throw new IOException("Proxy incompleto: enviados=" + total + " esperado=" + download.getTamano());
+            }
         }
+    }
+
+    public void retryQueuedDownload(long documentoId, String peerId) throws Exception {
+        if (!channel.isOpen()) {
+            throw new IOException("Cliente desconectado, no se puede reintentar entrega");
+        }
+        realizarDescargaProxy(documentoId, peerId);
+    }
+
+    public ClientContext getContext() {
+        return ctx;
+    }
+
+    public boolean isActive() {
+        return channel.isOpen();
     }
 
     private boolean isPeerUnavailableError(Throwable t) {
