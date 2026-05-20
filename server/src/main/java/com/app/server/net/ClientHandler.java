@@ -307,8 +307,8 @@ public class ClientHandler implements Runnable, Closeable {
                 channel.sendMensaje(Mensaje.respuestaOk()
                         .put("encolada", true)
                         .put("servidor", serverName)
-                        .put("mensaje", "Su peticion esta en cola, el servidor \""
-                                + serverName + "\" esta desconectado"));
+                        .put("mensaje", "Peticion rechazada, servidor \""
+                                + serverName + "\" desconectado, vuelva a intentarlo mas tarde"));
                 return;
             }
             throw e;
