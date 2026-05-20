@@ -180,7 +180,7 @@ public class ServerApp {
                 String line = scanner.nextLine().trim();
                 if (line.equalsIgnoreCase("exit")) break;
                 procesarConsola(line, server, peerRegistry, peerCatalog, eventBus,
-                        eventBuffer, logDAO);
+                        eventBuffer, logDAO, pendingQueueService);
             }
 
             System.out.println("[SHUTDOWN] Deteniendo servidor...");
@@ -224,7 +224,8 @@ public class ServerApp {
     private static void procesarConsola(String line, ServerCore server,
                                         PeerRegistry registry, PeerCatalog catalog,
                                         ServerEventBus eventBus,
-                                        InMemoryEventBuffer eventBuffer, LogDAO logDAO) {
+                                        InMemoryEventBuffer eventBuffer, LogDAO logDAO,
+                                        PendingDownloadQueueService pendingQueueService) {
         if (line.equalsIgnoreCase("status")) {
             System.out.println("TCP: " + server.getTcpPool().getActiveCount() + "/" + server.getTcpPool().getMaxClients());
             System.out.println("UDP: " + server.getUdpPool().getActiveCount() + "/" + server.getUdpPool().getMaxClients());
@@ -258,6 +259,12 @@ public class ServerApp {
             for (PeerInfo p : online) {
                 System.out.println("  " + p.getNombre() + " (" + p.getId().substring(0, 8) + ")  "
                         + p.getHost() + ":" + p.getPuertoPeer()
+        } else if (line.equalsIgnoreCase("queue")) {
+            if (pendingQueueService == null) {
+                System.out.println("Cola de reintentos P2P no disponible (P2P deshabilitado)");
+            } else {
+                System.out.println("Pendientes en cola: " + pendingQueueService.size());
+            }
                         + "  tcp=" + p.getPuertoTcp() + " udp=" + p.getPuertoUdp()
                         + "  ultimaSenal=" + p.getUltimaSenal());
             }

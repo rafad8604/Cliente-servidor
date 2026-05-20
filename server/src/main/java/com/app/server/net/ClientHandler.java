@@ -353,7 +353,14 @@ public class ClientHandler implements Runnable, Closeable {
         if (!channel.isOpen()) {
             throw new IOException("Cliente desconectado, no se puede reintentar entrega");
         }
-        realizarDescargaProxy(documentoId, peerId);
+        System.out.println("[HANDLER] retryQueuedDownload: docId=" + documentoId + " peer=" + (peerId == null ? "(nulo)" : peerId)
+                + " cliente=" + ctx);
+        try {
+            realizarDescargaProxy(documentoId, peerId);
+        } catch (Exception e) {
+            System.err.println("[HANDLER] Error reentregando docId=" + documentoId + " a cliente=" + ctx + ": " + e.getMessage());
+            throw e;
+        }
     }
 
     public ClientContext getContext() {

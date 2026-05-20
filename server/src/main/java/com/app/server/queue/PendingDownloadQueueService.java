@@ -106,11 +106,15 @@ public class PendingDownloadQueueService implements AutoCloseable {
                 req.incrementarIntentos();
                 if (eventBus != null) {
                     eventBus.publish(ServerEventType.PEER_DESCARGA_PROXY,
-                            "pending-download-queue",
-                            "reintentando docId=" + req.getDocumentoId()
-                                    + " peer=" + shortPeer(peerId)
-                                    + " cliente=" + req.getHandler().getContext());
+                        "pending-download-queue",
+                        "reintentando docId=" + req.getDocumentoId()
+                            + " peer=" + shortPeer(peerId)
+                            + " cliente=" + req.getHandler().getContext());
                 }
+                // Traza adicional para facilitar debug en consola.
+                System.out.println("[PENDING-QUEUE] Reintentando entrega docId=" + req.getDocumentoId()
+                    + " peer=" + shortPeer(peerId)
+                    + " cliente=" + req.getHandler().getContext());
                 req.getHandler().retryQueuedDownload(req.getDocumentoId(), peerId);
             } catch (Exception e) {
                 if (!req.getHandler().isActive()) {
