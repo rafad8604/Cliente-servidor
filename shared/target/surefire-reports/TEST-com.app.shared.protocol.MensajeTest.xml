@@ -15,7 +15,7 @@
     <property name="sun.java.launcher" value="SUN_STANDARD"/>
     <property name="user.country" value="CO"/>
     <property name="sun.boot.library.path" value="C:\Program Files\Java\jdk-21\bin"/>
-    <property name="sun.java.command" value="C:\Users\Estudiante\AppData\Local\Temp\surefire11999506103990021938\surefirebooter-20260520105902842_3.jar C:\Users\Estudiante\AppData\Local\Temp\surefire11999506103990021938 2026-05-20T10-59-02_746-jvmRun1 surefire-20260520105902842_1tmp surefire_0-20260520105902842_2tmp"/>
+    <property name="sun.java.command" value="C:\Users\Estudiante\AppData\Local\Temp\surefire2137920161194136504\surefirebooter-20260520111958774_3.jar C:\Users\Estudiante\AppData\Local\Temp\surefire2137920161194136504 2026-05-20T11-19-58_686-jvmRun1 surefire-20260520111958774_1tmp surefire_0-20260520111958774_2tmp"/>
     <property name="jdk.debug" value="release"/>
     <property name="surefire.test.class.path" value="C:\Users\Estudiante\Desktop\Cliente-servidor\shared\target\test-classes;C:\Users\Estudiante\Desktop\Cliente-servidor\shared\target\classes;C:\Users\Estudiante\.m2\repository\com\google\code\gson\gson\2.10.1\gson-2.10.1.jar;C:\Users\Estudiante\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\Estudiante\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\Estudiante\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\Estudiante\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\Estudiante\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\Estudiante\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\Estudiante\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\Estudiante\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
     <property name="sun.cpu.endian" value="little"/>
@@ -30,7 +30,7 @@
     <property name="line.separator" value="&#10;"/>
     <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
     <property name="java.specification.name" value="Java Platform API Specification"/>
-    <property name="surefire.real.class.path" value="C:\Users\Estudiante\AppData\Local\Temp\surefire11999506103990021938\surefirebooter-20260520105902842_3.jar"/>
+    <property name="surefire.real.class.path" value="C:\Users\Estudiante\AppData\Local\Temp\surefire2137920161194136504\surefirebooter-20260520111958774_3.jar"/>
     <property name="user.script" value=""/>
     <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
     <property name="java.runtime.version" value="21.0.8+12-LTS-250"/>
@@ -59,5 +59,5 @@
     <property name="java.class.version" value="65.0"/>
   </properties>
   <testcase name="helpersGeneranMensajesEsperados" classname="com.app.shared.protocol.MensajeTest" time="0.025"/>
-  <testcase name="serializaYDeserializaConTiposBasicos" classname="com.app.shared.protocol.MensajeTest" time="0.021"/>
+  <testcase name="serializaYDeserializaConTiposBasicos" classname="com.app.shared.protocol.MensajeTest" time="0.022"/>
 </testsuite>

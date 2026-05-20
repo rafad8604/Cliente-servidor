@@ -259,14 +259,14 @@ public class ServerApp {
             for (PeerInfo p : online) {
                 System.out.println("  " + p.getNombre() + " (" + p.getId().substring(0, 8) + ")  "
                         + p.getHost() + ":" + p.getPuertoPeer()
+                        + "  tcp=" + p.getPuertoTcp() + " udp=" + p.getPuertoUdp()
+                        + "  ultimaSenal=" + p.getUltimaSenal());
+            }
         } else if (line.equalsIgnoreCase("queue")) {
             if (pendingQueueService == null) {
                 System.out.println("Cola de reintentos P2P no disponible (P2P deshabilitado)");
             } else {
                 System.out.println("Pendientes en cola: " + pendingQueueService.size());
-            }
-                        + "  tcp=" + p.getPuertoTcp() + " udp=" + p.getPuertoUdp()
-                        + "  ultimaSenal=" + p.getUltimaSenal());
             }
         } else if (line.equalsIgnoreCase("remotos")) {
             if (catalog == null) { System.out.println("P2P deshabilitado"); return; }
