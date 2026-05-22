@@ -1223,10 +1223,7 @@ public class MainFrame extends JFrame {
                     SwingUtilities.invokeLater(() -> {
                         lblProgress.setText(formatSize(bytesRecibidos) + " recibidos");
                     });
-                }, mensaje -> SwingUtilities.invokeLater(() ->
-                        appendChat("  [COLA] " + mensaje, new Color(249, 226, 175))),
-                () -> SwingUtilities.invokeLater(() ->
-                        appendChat("  [REINTENTO] Reentrega automática iniciada", new Color(166, 227, 161))));
+                });
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -1245,11 +1242,7 @@ public class MainFrame extends JFrame {
         }).exceptionally(ex -> {
             SwingUtilities.invokeLater(() -> {
                 Throwable root = unwrapThrowable(ex);
-                if (root instanceof NetworkClient.DownloadQueuedException) {
-                    appendChat("  [COLA] " + root.getMessage(), new Color(249, 226, 175));
-                } else {
-                    appendChat("  [ERROR] Descarga privada: " + root.getMessage(), ERROR_COLOR);
-                }
+                appendChat("  [ERROR] Descarga privada: " + root.getMessage(), ERROR_COLOR);
                 progressBar.setVisible(false);
             });
             return null;
@@ -1322,10 +1315,7 @@ public class MainFrame extends JFrame {
                         SwingUtilities.invokeLater(() -> {
                             lblProgress.setText(formatSize(bytesRecibidos) + " recibidos");
                         });
-                    }, mensaje -> SwingUtilities.invokeLater(() ->
-                            appendChat("  [COLA] " + mensaje, new Color(249, 226, 175))),
-                    () -> SwingUtilities.invokeLater(() ->
-                            appendChat("  [REINTENTO] Reentrega automática iniciada", new Color(166, 227, 161))));
+                    });
                 } else {
                     networkClient.descargarEncriptado(docId, destino, bytesRecibidos -> {
                         SwingUtilities.invokeLater(() -> {
@@ -1359,11 +1349,7 @@ public class MainFrame extends JFrame {
         }).exceptionally(ex -> {
             SwingUtilities.invokeLater(() -> {
                 Throwable root = unwrapThrowable(ex);
-                if (root instanceof NetworkClient.DownloadQueuedException) {
-                    appendChat("  [COLA] " + root.getMessage(), new Color(249, 226, 175));
-                } else {
-                    appendChat("  [ERROR] Error descargando: " + root.getMessage(), ERROR_COLOR);
-                }
+                appendChat("  [ERROR] Error descargando: " + root.getMessage(), ERROR_COLOR);
                 progressBar.setVisible(false);
             });
             return null;

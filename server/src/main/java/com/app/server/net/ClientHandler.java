@@ -298,17 +298,10 @@ public class ClientHandler implements Runnable, Closeable {
             realizarDescargaProxy(docId, peerId);
         } catch (IOException e) {
             if (isPeerUnavailableError(e)) {
-                if (pendingQueue != null) {
-                    pendingQueue.enqueue(docId, peerId, this);
-                }
-                String serverName = pendingQueue != null
-                        ? pendingQueue.resolveServerDisplayName(peerId)
+                String serverName = peerId == null ? "desconocido"
                         : peerId.substring(0, Math.min(8, peerId.length()));
-                channel.sendMensaje(Mensaje.respuestaOk()
-                        .put("encolada", true)
-                        .put("servidor", serverName)
-                        .put("mensaje", "Peticion rechazada, servidor \""
-                                + serverName + "\" desconectado, vuelva a intentarlo mas tarde"));
+                channel.sendMensaje(Mensaje.error("Servidor \"" + serverName
+                        + "\" desconectado, vuelva a intentar más tarde"));
                 return;
             }
             throw e;

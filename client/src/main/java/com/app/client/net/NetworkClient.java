@@ -365,22 +365,12 @@ public class NetworkClient implements Closeable {
                 throw new IOException("Error: " + header.getString("detalle"));
             }
 
-            boolean wasQueued = false;
-            while (header.getDatos().containsKey("encolada") && header.getBoolean("encolada")) {
-                wasQueued = true;
+            if (header.getDatos().containsKey("encolada") && header.getBoolean("encolada")) {
                 String mensaje = header.getString("mensaje");
                 if (mensaje == null || mensaje.isBlank()) {
-                    mensaje = "Su peticion esta en cola";
-                }
-                if (onQueuedMessage != null) {
-                    onQueuedMessage.accept(mensaje);
-                    header = esperarRespuestaTcp();
-                    continue;
+                    mensaje = "Servidor remoto desconectado, vuelva a intentar más tarde";
                 }
                 throw new DownloadQueuedException(mensaje);
-            }
-            if (wasQueued && onResume != null) {
-                onResume.run();
             }
 
             long tamano = header.getLong("tamano");
